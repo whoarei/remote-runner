@@ -572,12 +572,13 @@ impl RunManager {
             return Ok(RunOutcome::Canceled { code: None });
         }
         let config = device.serial.as_ref().unwrap();
+        let remote = format!("{}/{}", device.workspace_root.trim_end_matches('/'), run_id);
+        serial::preflight(req, &remote, &files)?;
         let port = serial::transport::open(config)?;
         let (control, mut controls) = mpsc::unbounded_channel();
         if let Some(handle) = self.handles.lock().get_mut(run_id) {
             handle.control = control.clone();
         }
-        let remote = format!("{}/{}", device.workspace_root.trim_end_matches('/'), run_id);
         let execution = serial::execute(
             port,
             config.baud_rate,

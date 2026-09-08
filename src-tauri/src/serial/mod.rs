@@ -21,6 +21,27 @@ pub enum Event {
     Output(Vec<u8>),
 }
 
+/// Validate every generated line before opening the port or creating remote files.
+pub fn preflight(req: &RunRequest, remote: &str, files: &[filesync::UploadEntry]) -> Result<()> {
+    let nonce = "00000000000000000000000000000000";
+    protocol::validate_wire_command(&protocol::wrap(
+        &build_script(req, remote),
+        nonce,
+        Some((req.cols, req.rows)),
+    ))?;
+    protocol::validate_wire_command(&protocol::wrap(
+        &format!("mkdir -p {}", sh_quote(remote)),
+        nonce,
+        None,
+    ))?;
+    for file in files {
+        for command in file.commands(remote) {
+            protocol::validate_wire_command(&protocol::wrap(&command, nonce, None))?;
+        }
+    }
+    Ok(())
+}
+
 pub async fn test_device(device: &DeviceProfile) -> Result<String> {
     device.validate()?;
     let config = device
@@ -66,6 +87,7 @@ pub async fn execute<T: AsyncRead + AsyncWrite + Unpin>(
     controls: &mut mpsc::UnboundedReceiver<SessionControl>,
     events: impl Fn(Event),
 ) -> Result<CommandResult> {
+    preflight(req, remote, &files)?;
     let mut session = ShellSession::new(io, baud_rate);
     let runtime_probe = match &req.kind {
         ScriptKind::Python => " && command -v python3 >/dev/null",
@@ -123,30 +145,32 @@ pub async fn execute<T: AsyncRead + AsyncWrite + Unpin>(
             return Err(RunnerError::Serial("cannot create remote workspace".into()));
         }
         for file in files {
-            let result = session
-                .execute(
-                    &file.command(remote),
-                    None,
-                    Some(Duration::from_secs(30)),
-                    controls,
-                    |_| {},
-                    |_| {},
-                )
-                .await?;
-            if result.stopped == Some(StopReason::Timeout) {
-                return Err(RunnerError::Serial(format!(
-                    "upload timed out: {}",
-                    file.path()
-                )));
-            }
-            if result.stopped.is_some() {
-                return Ok(result);
-            }
-            if result.code != 0 {
-                return Err(RunnerError::Serial(format!(
-                    "upload failed: {}",
-                    file.path()
-                )));
+            for command in file.commands(remote) {
+                let result = session
+                    .execute(
+                        &command,
+                        None,
+                        Some(Duration::from_secs(30)),
+                        controls,
+                        |_| {},
+                        |_| {},
+                    )
+                    .await?;
+                if result.stopped == Some(StopReason::Timeout) {
+                    return Err(RunnerError::Serial(format!(
+                        "upload timed out: {}",
+                        file.path()
+                    )));
+                }
+                if result.stopped.is_some() {
+                    return Ok(result);
+                }
+                if result.code != 0 {
+                    return Err(RunnerError::Serial(format!(
+                        "upload failed: {}",
+                        file.path()
+                    )));
+                }
             }
         }
     }

@@ -31,6 +31,7 @@ export function RunConsole() {
     term.loadAddon(fit);
     term.open(containerRef.current);
     fit.fit();
+    useAppStore.getState().setConsoleSize(term.cols, term.rows);
 
     const input = term.onData((data) => {
       const { activeRunId: runId, runs } = useAppStore.getState();
@@ -62,6 +63,7 @@ export function RunConsole() {
 
     const observer = new ResizeObserver(() => {
       fit.fit();
+      useAppStore.getState().setConsoleSize(term.cols, term.rows);
       const runId = useAppStore.getState().activeRunId;
       if (runId) {
         void api.resizeRunConsole(runId, term.cols, term.rows).catch(() => {});

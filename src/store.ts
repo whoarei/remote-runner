@@ -15,6 +15,7 @@ interface AppState {
   /** 每个 run 的输出缓冲（base64 拼接前的原始字节已转成 string 存储代价大，直接存字节数组） */
   outputBuffers: Record<string, OutputBuffer>;
   activeRunId: string | null;
+  consoleSize: { cols: number; rows: number };
   /** console 需要重绘的信号 */
   consoleSeq: number;
 
@@ -26,6 +27,7 @@ interface AppState {
   openWorkspaceFile: (name: string) => Promise<void>;
   handleRunEvent: (ev: RunEvent) => void;
   setActiveRun: (id: string | null) => void;
+  setConsoleSize: (cols: number, rows: number) => void;
   loadHistory: () => Promise<void>;
 }
 
@@ -41,6 +43,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   runs: {},
   outputBuffers: {},
   activeRunId: null,
+  consoleSize: { cols: 80, rows: 24 },
   consoleSeq: 0,
 
   history: [],
@@ -98,6 +101,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setActiveRun: (id) => set((s) => ({ activeRunId: id, consoleSeq: s.consoleSeq + 1 })),
+  setConsoleSize: (cols, rows) => set({ consoleSize: { cols, rows } }),
 
   loadHistory: async () => {
     set({ history: await api.getRunHistory() });

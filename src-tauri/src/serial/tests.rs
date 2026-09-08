@@ -78,8 +78,14 @@ fn real_local_shell_upload_does_not_evaluate_file_content() {
         relative: "a'b.py".into(),
         data: b"$(touch SHOULD_NOT_EXIST)\nRR_UPLOAD_EOF".to_vec(),
     };
-    let command =
-        serial::protocol::wrap(&serial::filesync::upload_command(&file, "."), "test", None);
+    std::fs::write(root.join(&file.relative), vec![b'x'; 1000]).unwrap();
+    let command = serial::protocol::wrap(
+        &serial::filesync::upload_commands(&file, ".")
+            .next()
+            .unwrap(),
+        "test",
+        None,
+    );
     let result = std::process::Command::new(shell)
         .current_dir(&root)
         .arg("-c")
@@ -95,6 +101,51 @@ fn real_local_shell_upload_does_not_evaluate_file_content() {
         String::from_utf8_lossy(&result.stderr)
     );
     assert_eq!(std::fs::read(root.join("a'b.py")).unwrap(), file.data);
+    assert!(!root.join("SHOULD_NOT_EXIST").exists());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn large_upload_uses_bounded_arguments_and_preserves_all_bytes() {
+    let Some(shell) = local_shell() else {
+        return;
+    };
+    let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    let file = serial::filesync::TextFile {
+        relative: "large ' file.py".into(),
+        data: b"literal $(touch SHOULD_NOT_EXIST)\n".repeat(8192),
+    };
+    // A script file avoids the *test host's* argv limit; each generated sh -c
+    // invocation inside it still exercises the production wrapper and decoder.
+    let mut script = String::from("set -e\n");
+    let mut count = 0;
+    for command in serial::filesync::upload_commands(&file, ".") {
+        let wrapped = serial::protocol::wrap(&command, "large", None);
+        serial::protocol::validate_wire_command(&wrapped).unwrap();
+        assert!(wrapped.len() < 8192);
+        script.push_str(&wrapped);
+        count += 1;
+    }
+    assert!(count > 1);
+    std::fs::write(root.join("upload.sh"), script).unwrap();
+    let result = std::process::Command::new(shell)
+        .current_dir(&root)
+        .arg("upload.sh")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&result.stdout)
+            .matches("\x1eRR_large_E:0\x1f")
+            .count(),
+        count
+    );
+    assert_eq!(std::fs::read(root.join(&file.relative)).unwrap(), file.data);
     assert!(!root.join("SHOULD_NOT_EXIST").exists());
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -255,7 +306,7 @@ async fn input_arriving_with_the_start_marker_is_queued_until_the_process_is_rea
     });
     tx.send(SessionControl::Input(b"early\n".to_vec())).unwrap();
     let result = ShellSession::new(client, 115200)
-        .execute("cat", None, None, &mut rx, |_| {}, |_| {})
+        .execute("cat", Some((80, 24)), None, &mut rx, |_| {}, |_| {})
         .await
         .unwrap();
     assert_eq!(result.code, 0);
@@ -384,4 +435,249 @@ async fn user_stop_is_forwarded_as_ctrl_c() {
     assert_eq!(result.stopped, Some(StopReason::User));
     fake.await.unwrap();
     assert!(*seen.lock().unwrap());
+}
+
+#[tokio::test(start_paused = true)]
+async fn partial_submission_stop_requires_remote_confirmation() {
+    let (client, mut device) = tokio::io::duplex(1);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let fake = tokio::spawn(async move {
+        assert_eq!(device.read_u8().await.unwrap(), b's');
+        tx.send(SessionControl::Interrupt).unwrap();
+        loop {
+            let byte = device.read_u8().await.unwrap();
+            assert_ne!(
+                byte, b'\n',
+                "a partial command must not be submitted by Stop"
+            );
+            if byte == 3 {
+                break;
+            }
+        }
+        let mut rest = Vec::new();
+        device.read_to_end(&mut rest).await.unwrap();
+        assert!(rest.is_empty());
+    });
+    let error = ShellSession::new(client, 115200)
+        .execute("sleep 60", None, None, &mut rx, |_| {}, |_| {})
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("stop was not confirmed"));
+    fake.await.unwrap();
+}
+
+#[tokio::test]
+async fn stop_before_io_never_touches_the_device() {
+    let (client, mut device) = tokio::io::duplex(128);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    tx.send(SessionControl::Interrupt).unwrap();
+    let result = ShellSession::new(client, 115200)
+        .execute("true", None, None, &mut rx, |_| {}, |_| {})
+        .await
+        .unwrap();
+    assert_eq!(result.stopped, Some(StopReason::User));
+    let mut received = Vec::new();
+    device.read_to_end(&mut received).await.unwrap();
+    assert!(received.is_empty());
+}
+
+#[tokio::test]
+async fn stopping_discards_early_input_even_when_begin_arrives_late() {
+    let (client, mut device) = tokio::io::duplex(128);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    tx.send(SessionControl::Input(b"dangerous input\n".to_vec()))
+        .unwrap();
+    let fake = tokio::spawn(async move {
+        let (_, nonce) = read_command(&mut device).await;
+        tx.send(SessionControl::Interrupt).unwrap();
+        begin(&mut device, &nonce).await;
+        assert_eq!(device.read_u8().await.unwrap(), 3);
+        end(&mut device, &nonce, 130).await;
+        let mut received = Vec::new();
+        device.read_to_end(&mut received).await.unwrap();
+        assert!(
+            received.is_empty(),
+            "stdin escaped into the stopped command"
+        );
+    });
+    let result = ShellSession::new(client, 115200)
+        .execute("cat", Some((80, 24)), None, &mut rx, |_| {}, |_| {})
+        .await
+        .unwrap();
+    assert_eq!(result.stopped, Some(StopReason::User));
+    fake.await.unwrap();
+}
+
+#[tokio::test]
+async fn setup_drops_input_and_completed_process_does_not_receive_queued_input() {
+    for dimensions in [None, Some((80, 24))] {
+        let (client, mut device) = tokio::io::duplex(128);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        tx.send(SessionControl::Input(b"must not reach shell\n".to_vec()))
+            .unwrap();
+        let fake = tokio::spawn(async move {
+            let (_, nonce) = read_command(&mut device).await;
+            device
+                .write_all(format!("\x1eRR_{nonce}_B\x1f\x1eRR_{nonce}_E:0\x1f").as_bytes())
+                .await
+                .unwrap();
+            let mut received = Vec::new();
+            device.read_to_end(&mut received).await.unwrap();
+            assert!(received.is_empty());
+        });
+        let result = ShellSession::new(client, 115200)
+            .execute("true", dimensions, None, &mut rx, |_| {}, |_| {})
+            .await
+            .unwrap();
+        assert_eq!(result.code, 0);
+        fake.await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn failed_upload_chunk_prevents_remaining_chunks_and_script_execution() {
+    let (client, mut device) = tokio::io::duplex(128);
+    let fake = tokio::spawn(async move {
+        for index in 0..4 {
+            let (command, nonce) = read_command(&mut device).await;
+            if index >= 2 {
+                assert!(command.contains("base64 -d"));
+            }
+            begin(&mut device, &nonce).await;
+            end(&mut device, &nonce, if index == 3 { 1 } else { 0 }).await;
+        }
+        let mut received = Vec::new();
+        device.read_to_end(&mut received).await.unwrap();
+        assert!(received.is_empty());
+    });
+    let req: RunRequest = serde_json::from_value(serde_json::json!({
+        "device_id":"test", "kind":"python", "entry":"test.py", "workspace_dir":"."
+    }))
+    .unwrap();
+    let file = serial::filesync::UploadEntry::File(serial::filesync::TextFile {
+        relative: "test.py".into(),
+        data: vec![b'a'; 10240],
+    });
+    let (_tx, mut rx) = mpsc::unbounded_channel();
+    let error = serial::execute(
+        client,
+        115200,
+        &req,
+        "/tmp/test",
+        vec![file],
+        &mut rx,
+        |_| {},
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("upload failed"));
+    fake.await.unwrap();
+}
+
+#[tokio::test]
+async fn invalid_wire_commands_fail_before_any_remote_changes() {
+    for command in [
+        "x".repeat(4096),
+        "echo x\n".repeat(4096),
+        "printf '\u{3}'".into(),
+        "printf '\u{1b}'".into(),
+        "printf '\r'".into(),
+    ] {
+        let req: RunRequest = serde_json::from_value(serde_json::json!({
+            "device_id":"test", "kind":"command", "command":command, "workspace_dir":"."
+        }))
+        .unwrap();
+        let (client, mut device) = tokio::io::duplex(128);
+        let (_tx, mut rx) = mpsc::unbounded_channel();
+        assert!(
+            serial::execute(client, 115200, &req, "/tmp/test", vec![], &mut rx, |_| {})
+                .await
+                .is_err()
+        );
+        let mut received = Vec::new();
+        device.read_to_end(&mut received).await.unwrap();
+        assert!(received.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn continuous_output_does_not_starve_stop_writes() {
+    let (client, mut device) = tokio::io::duplex(4096);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let fake = tokio::spawn(async move {
+        let (_, nonce) = read_command(&mut device).await;
+        begin(&mut device, &nonce).await;
+        let (mut read, mut write) = tokio::io::split(&mut device);
+        loop {
+            tokio::select! {
+                biased;
+                byte = read.read_u8() => { assert_eq!(byte.unwrap(), 3); break; }
+                result = write.write_all(&[b'x'; 1024]) => { result.unwrap(); }
+            }
+        }
+        write
+            .write_all(format!("\x1eRR_{nonce}_E:130\x1f").as_bytes())
+            .await
+            .unwrap();
+    });
+    let result = tokio::time::timeout(
+        Duration::from_secs(3),
+        ShellSession::new(client, 115200).execute(
+            "yes",
+            None,
+            None,
+            &mut rx,
+            |_| {},
+            |state| {
+                if state == "running" {
+                    tx.send(SessionControl::Interrupt).unwrap();
+                }
+            },
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(result.stopped, Some(StopReason::User));
+    fake.await.unwrap();
+}
+
+#[test]
+fn terminal_setup_precedes_begin_and_setup_failure_still_has_an_exit_marker() {
+    let Some(shell) = local_shell() else {
+        return;
+    };
+    let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+    std::fs::create_dir_all(&root).unwrap();
+    // Exercise the actual wrapper with a deterministic stty stand-in. This
+    // verifies setup/cleanup ordering, not the host's hardware termios behavior.
+    let fake_stty = "#!/bin/sh\ncase \"$1\" in -g) echo saved;; saved) printf RESTORED;; *) printf CONFIGURED;; esac\n";
+    for (implementation, expected_code) in [(fake_stty, 0), ("#!/bin/sh\nexit 1\n", 125)] {
+        std::fs::write(root.join("stty"), implementation).unwrap();
+        let command = format!(
+            "chmod +x stty; PATH=\"$PWD:$PATH\"; {}",
+            serial::protocol::wrap("printf BODY", "tty", Some((120, 40)))
+        );
+        let result = std::process::Command::new(&shell)
+            .current_dir(&root)
+            .arg("-c")
+            .arg(command)
+            .output()
+            .unwrap();
+        let mut parser = serial::protocol::FrameParser::new("tty");
+        let output = parser.push(&result.stdout).unwrap();
+        assert_eq!(
+            parser.code,
+            Some(expected_code),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        if expected_code == 0 {
+            assert!(result.stdout.starts_with(b"CONFIGURED\x1eRR_tty_B\x1f"));
+            assert_eq!(output, b"BODYRESTORED");
+        } else {
+            assert!(output.is_empty());
+        }
+    }
+    std::fs::remove_dir_all(root).unwrap();
 }

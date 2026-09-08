@@ -72,7 +72,7 @@ export function RunToolbar() {
           timeout_secs: timeoutSecs,
         };
       }
-      const runId = await api.runScript(request);
+      const runId = await api.runScript({ ...request, ...useAppStore.getState().consoleSize });
       setActiveRun(runId);
     } catch (e) {
       alert(`启动失败: ${e}`);

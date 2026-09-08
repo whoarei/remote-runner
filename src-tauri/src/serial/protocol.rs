@@ -78,18 +78,34 @@ fn retain_prefix(data: &mut Vec<u8>, needle: &[u8]) {
 
 pub fn wrap(command: &str, nonce: &str, dimensions: Option<(u32, u32)>) -> String {
     let tty = dimensions.map(|(cols, rows)| format!(
-        "__rr_tty=$(stty -g) || exit 125; stty echo isig intr '^C' rows {rows} cols {cols} || exit 125; "
+        "__rr_tty=$(stty -g) || {{ __rr_begin; exit 125; }}; stty echo icanon isig icrnl -inlcr -igncr -ixon -ixoff intr '^C' rows {rows} cols {cols} || {{ __rr_begin; exit 125; }}; "
     )).unwrap_or_default();
     // Keep the wrapper alive long enough to restore termios and emit the end marker.
     // The child explicitly resets these traps so Ctrl-C reaches the actual command even
     // on shells that inherit trapped signal dispositions into a nested `sh -c`.
     let cleanup = format!("__rr_rc=$?; if [ -n \"$__rr_tty\" ]; then stty \"$__rr_tty\"; fi; printf '\\036RR_%s_E:%s\\037' {nonce} \"$__rr_rc\"");
     let body = format!(
-        "__rr_tty=; trap ':' INT QUIT; trap {} EXIT; printf '\\036RR_%s_B\\037' {nonce}; {tty}sh -c {}; exit $?",
+        "__rr_tty=; trap ':' INT QUIT; trap {} EXIT; __rr_begin() {{ printf '\\036RR_%s_B\\037' {nonce}; }}; {tty}__rr_begin; sh -c {}; exit $?",
         sh_quote(&cleanup),
         sh_quote(&format!("trap - INT QUIT; {command}"))
     );
     format!("sh -c {}\n", sh_quote(&body))
+}
+
+pub fn validate_wire_command(command: &str) -> Result<()> {
+    if command.len() > 16 * 1024 {
+        return Err(RunnerError::InvalidInput(
+            "serial shell wrapper exceeds 16 KiB; put long commands in an uploaded script file"
+                .into(),
+        ));
+    }
+    if command.bytes().any(|b| (b < 32 && b != b'\n') || b == 127) {
+        return Err(RunnerError::InvalidInput("serial shell command contains terminal control characters; put such content in an uploaded script file".into()));
+    }
+    if command.split('\n').any(|line| line.len() > 2048) {
+        return Err(RunnerError::InvalidInput("serial shell command line exceeds 2048 bytes; use a script file for long commands or arguments".into()));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

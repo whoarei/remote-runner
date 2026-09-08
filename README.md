@@ -50,6 +50,8 @@ Serial device settings are port and baud rate. Serial uses 8 data bits, no parit
 
 Serial workspace synchronization is deliberately conservative: UTF-8 text files only, up to 1 MiB per file and 8 MiB per workspace. Symbolic links, special files, redirected paths, NUL bytes, and `.git`/`.hg`/`.svn` directories are rejected or skipped according to the V1 rules.
 
+Uploads use acknowledged chunks of up to 3 KiB, with at most 1024 files/directories. Generated shell wrappers are checked before opening the port (16 KiB per wrapper, 2048 bytes per physical line, no literal terminal control characters except newline). Put complex commands in uploaded scripts. Stop clears queued input and requires a remote completion marker once any bytes have been sent; an unconfirmed stop reports unknown remote state. Serial Shell shares the login shell's input channel and cannot fully isolate input racing with process exit; see the serial design notes below.
+
 ## Validation
 
 ```powershell

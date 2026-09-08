@@ -13,7 +13,7 @@ impl PortLease {
         #[cfg(windows)]
         let key = port.trim().trim_start_matches(r"\\.\").to_ascii_uppercase();
         #[cfg(not(windows))]
-        let key = std::fs::canonicalize(port)
+        let key = std::fs::canonicalize(port.trim())
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| port.trim().to_string());
         let mut busy = BUSY_PORTS.lock();
