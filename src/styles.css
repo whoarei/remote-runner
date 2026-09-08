@@ -1,0 +1,369 @@
+:root {
+  color-scheme: dark;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: #17181c;
+  color: #ddd;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ---------- header / device bar ---------- */
+.app-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid #333;
+  background: #1e1f24;
+}
+
+.device-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.device-bar .label {
+  color: #999;
+}
+
+/* ---------- main ---------- */
+.app-main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.side {
+  width: 260px;
+  border-right: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.panel-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  color: #999;
+  font-size: 12px;
+  text-transform: uppercase;
+  border-bottom: 1px solid #2a2b30;
+}
+
+.workspace-panel {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+
+.workspace-dir {
+  padding: 4px 10px;
+  font-size: 11px;
+  color: #777;
+  word-break: break-all;
+}
+
+.file-list,
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+
+.file-list li {
+  padding: 3px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-list li:hover {
+  background: #26272d;
+}
+
+.file-list li.active {
+  background: #31333c;
+  color: #fff;
+}
+
+/* ---------- editor ---------- */
+.editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.editor.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+}
+
+.editor-title {
+  padding: 4px 12px;
+  font-size: 12px;
+  color: #888;
+  border-bottom: 1px solid #2a2b30;
+}
+
+.editor-textarea {
+  flex: 1;
+  resize: none;
+  border: none;
+  outline: none;
+  padding: 10px 12px;
+  background: #17181c;
+  color: #ddd;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ---------- footer / console ---------- */
+.app-footer {
+  height: 42%;
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid #333;
+}
+
+.run-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #1e1f24;
+  border-bottom: 1px solid #2a2b30;
+}
+
+.command-input {
+  flex: 1;
+}
+
+.args-input {
+  width: 220px;
+}
+
+.timeout-input {
+  width: 70px;
+}
+
+/* ---------- run console ---------- */
+.run-console {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.console-header {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: #999;
+  background: #1e1f24;
+}
+
+.console-body {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 0 4px 8px;
+  background: #1e1f24;
+}
+
+/* ---------- history ---------- */
+.history-panel {
+  height: 40%;
+  border-top: 1px solid #2a2b30;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.history-list li {
+  padding: 5px 12px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.history-list li:hover {
+  background: #26272d;
+}
+
+.history-list li.empty {
+  color: #666;
+  cursor: default;
+}
+
+.history-label {
+  color: #ccc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-meta {
+  color: #777;
+  font-size: 11px;
+}
+
+/* ---------- widgets ---------- */
+select,
+input {
+  background: #26272d;
+  color: #ddd;
+  border: 1px solid #3a3b42;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+button {
+  background: #2f313a;
+  color: #ddd;
+  border: 1px solid #3a3b42;
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #3a3c46;
+}
+
+button.primary {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+
+button.primary:hover {
+  background: #1d4ed8;
+}
+
+button.danger {
+  background: #b91c1c;
+  border-color: #b91c1c;
+  color: #fff;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---------- run states ---------- */
+.run-state {
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 8px;
+  background: #333;
+}
+
+.state-running {
+  color: #4ade80;
+}
+
+.state-preparing,
+.state-syncing {
+  color: #facc15;
+}
+
+.state-stopping {
+  color: #fb923c;
+}
+
+.state-exited {
+  color: #93c5fd;
+}
+
+.state-failed {
+  color: #f87171;
+}
+
+.state-canceled {
+  color: #fb923c;
+}
+
+/* ---------- modal ---------- */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  background: #22232a;
+  border: 1px solid #3a3b42;
+  border-radius: 8px;
+  padding: 16px;
+  width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.modal h3 {
+  margin: 0 0 4px;
+}
+
+.modal label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #999;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.test-result {
+  background: #17181c;
+  padding: 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  max-height: 140px;
+  overflow: auto;
+  white-space: pre-wrap;
+}

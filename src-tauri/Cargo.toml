@@ -1,0 +1,38 @@
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+# 使用 ring 加密后端，避免 aws-lc-sys 在 Windows 上依赖 NASM
+russh = { version = "0.63", default-features = false, features = ["ring", "flate2", "rsa"] }
+russh-sftp = "2.4"
+uuid = { version = "1", features = ["v4"] }
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+dirs = "5"
+parking_lot = "0.12"
+base64 = "0.22"
+sha2 = "0.10"
+futures = "0.3"
+
+[package]
+name = "remote-runner"
+version = "0.1.0"
+description = "Embedded Linux Remote Script Runner"
+edition = "2021"
+build = "build.rs"
+default-run = "remote-runner"
+
+[[bin]]
+name = "remote-runner"
+path = "src/main.rs"
+
+[[bin]]
+name = "rr-cli"
+path = "src/bin/rr_cli.rs"
