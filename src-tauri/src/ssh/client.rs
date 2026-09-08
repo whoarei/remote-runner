@@ -10,29 +10,60 @@ use std::time::Duration;
 /// known_hosts 简化实现：TOFU（首次信任并保存，再次连接校验）
 pub struct KnownHosts {
     path: PathBuf,
-    map: HashMap<String, String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stale_connections_cannot_overwrite_trust_or_accept_changed_keys() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let mut first = KnownHosts::load(&root);
+        let mut second = KnownHosts::load(&root);
+        first.check_or_trust("host-a:22", "key-a").unwrap();
+        second.check_or_trust("host-b:22", "key-b").unwrap();
+        assert!(matches!(
+            second.check_or_trust("host-a:22", "changed"),
+            Err(RunnerError::HostKeyMismatch(_))
+        ));
+        assert!(first.check_or_trust("host-b:22", "key-b").unwrap());
+        std::fs::write(root.join("known_hosts.json"), "broken json").unwrap();
+        assert!(first.check_or_trust("host-a:22", "changed").is_err());
+        assert_eq!(
+            std::fs::read_to_string(root.join("known_hosts.json")).unwrap(),
+            "broken json"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+// All connections must read/check/write the same trust store under one lock.
+static KNOWN_HOSTS_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
 impl KnownHosts {
     pub fn load(config_dir: &Path) -> Self {
         let path = config_dir.join("known_hosts.json");
-        let map = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
-        Self { path, map }
+        Self { path }
     }
 
     /// 校验或记录 host key 指纹，返回 Ok(true) 表示接受连接
     pub fn check_or_trust(&mut self, addr: &str, fingerprint: &str) -> Result<bool> {
-        match self.map.get(addr) {
+        let _guard = KNOWN_HOSTS_LOCK.lock();
+        let mut map: HashMap<String, String> = match std::fs::read_to_string(&self.path) {
+            Ok(data) => serde_json::from_str(&data)
+                .map_err(|e| RunnerError::InvalidInput(format!("invalid known_hosts.json: {e}")))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => HashMap::new(),
+            Err(e) => return Err(e.into()),
+        };
+        match map.get(addr) {
             Some(saved) if saved == fingerprint => Ok(true),
             Some(saved) => Err(RunnerError::HostKeyMismatch(format!(
                 "{addr}: saved {saved}, got {fingerprint}"
             ))),
             None => {
-                self.map.insert(addr.to_string(), fingerprint.to_string());
-                let data = serde_json::to_string_pretty(&self.map)
+                map.insert(addr.to_string(), fingerprint.to_string());
+                let data = serde_json::to_string_pretty(&map)
                     .map_err(|e| RunnerError::InvalidInput(e.to_string()))?;
                 if let Some(parent) = self.path.parent() {
                     std::fs::create_dir_all(parent)?;
@@ -90,7 +121,8 @@ pub struct SshConnection {
 impl SshConnection {
     pub async fn connect(device: &DeviceProfile, config_dir: &Path) -> Result<Self> {
         let config = Arc::new(Config {
-            inactivity_timeout: Some(Duration::from_secs(3600)),
+            inactivity_timeout: None,
+            keepalive_interval: Some(Duration::from_secs(30)),
             ..Default::default()
         });
 
@@ -100,12 +132,19 @@ impl SshConnection {
             known_hosts,
         };
 
-        let mut handle =
-            tokio::time::timeout(Duration::from_secs(10), client::connect(config, device.addr(), handler))
-                .await
-                .map_err(|_| RunnerError::Ssh(format!("connect to {} timed out", device.addr())))??;
+        let mut handle = tokio::time::timeout(
+            Duration::from_secs(10),
+            client::connect(config, device.addr(), handler),
+        )
+        .await
+        .map_err(|_| RunnerError::Ssh(format!("connect to {} timed out", device.addr())))??;
 
-        Self::authenticate(&mut handle, device).await?;
+        tokio::time::timeout(
+            Duration::from_secs(20),
+            Self::authenticate(&mut handle, device),
+        )
+        .await
+        .map_err(|_| RunnerError::Ssh("authentication timed out".into()))??;
         Ok(Self { handle })
     }
 

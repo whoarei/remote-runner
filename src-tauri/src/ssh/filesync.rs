@@ -11,6 +11,22 @@ pub async fn open_sftp(conn: &SshConnection) -> Result<SftpSession> {
     Ok(sftp)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_text_without_corrupting_binary_assets() {
+        assert!(is_text_script("run"));
+        assert!(is_text_script("TEST.SH"));
+        assert!(!is_text_script("data.bin"));
+        assert_eq!(normalize_lf(b"a\r\nb\r\n".to_vec()), b"a\nb\n");
+        for data in [b"\0\r\n".as_slice(), b"\xff\r\n"] {
+            assert_eq!(normalize_lf(data.to_vec()), data);
+        }
+    }
+}
+
 async fn mkdir_p(sftp: &SftpSession, path: &str) -> Result<()> {
     // 逐级创建目录，忽略“已存在”错误
     let mut current = String::new();
@@ -29,7 +45,11 @@ async fn mkdir_p(sftp: &SftpSession, path: &str) -> Result<()> {
         if p.is_empty() {
             continue;
         }
-        let _ = sftp.create_dir(p).await;
+        if let Err(error) = sftp.create_dir(p).await {
+            if !sftp.metadata(p).await?.is_dir() {
+                return Err(error.into());
+            }
+        }
     }
     Ok(())
 }
@@ -49,14 +69,25 @@ fn upload_dir_inner<'a>(
     count: &'a mut u64,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
     Box::pin(async move {
-        let mut entries = std::fs::read_dir(local)?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let root = std::fs::canonicalize(local)?;
+        let mut entries = std::fs::read_dir(local)?.collect::<std::result::Result<Vec<_>, _>>()?;
         entries.sort_by_key(|e| e.file_name());
         for entry in entries {
             let name = entry.file_name().to_string_lossy().to_string();
             let local_path = entry.path();
             let remote_path = format!("{}/{}", remote.trim_end_matches('/'), name);
-            let meta = entry.metadata()?;
+            let meta = std::fs::symlink_metadata(&local_path)?;
+            if meta.file_type().is_symlink() {
+                tracing::warn!("skipping symlink: {}", local_path.display());
+                continue;
+            }
+            // Also reject Windows junctions/reparse points resolving outside this directory.
+            if std::fs::canonicalize(&local_path)?.parent() != Some(root.as_path()) {
+                return Err(crate::error::RunnerError::InvalidInput(format!(
+                    "path escapes workspace: {}",
+                    local_path.display()
+                )));
+            }
             if meta.is_dir() {
                 mkdir_p(sftp, &remote_path).await?;
                 upload_dir_inner(sftp, &local_path, &remote_path, count).await?;
@@ -72,6 +103,7 @@ fn upload_dir_inner<'a>(
                 file.write_all(&data).await.map_err(|e| {
                     crate::error::RunnerError::Ssh(format!("sftp write {remote_path}: {e}"))
                 })?;
+                file.shutdown().await?;
                 // 保留可执行位
                 #[cfg(unix)]
                 {
@@ -91,17 +123,34 @@ fn upload_dir_inner<'a>(
 /// 判断是否为文本脚本（需要 CRLF→LF 规范化）
 fn is_text_script(name: &str) -> bool {
     let lower = name.to_lowercase();
+    if !lower.contains('.') {
+        return true;
+    }
     match lower.rsplit('.').next() {
         Some(ext) => matches!(
             ext,
-            "sh" | "bash" | "py" | "txt" | "cfg" | "ini" | "yaml" | "yml" | "json" | "toml"
-                | "csv" | "md" | "env"
+            "sh" | "bash"
+                | "py"
+                | "txt"
+                | "cfg"
+                | "ini"
+                | "yaml"
+                | "yml"
+                | "json"
+                | "toml"
+                | "csv"
+                | "md"
+                | "env"
         ),
         None => true, // 无扩展名按文本处理
     }
 }
 
 fn normalize_lf(data: Vec<u8>) -> Vec<u8> {
+    // Extensionless executables and binary assets must remain byte-for-byte intact.
+    if data.contains(&0) || std::str::from_utf8(&data).is_err() {
+        return data;
+    }
     if !data.windows(2).any(|w| w == b"\r\n") {
         return data;
     }

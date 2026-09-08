@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, inferKind, RunRequest, ScriptKind } from "../api";
 import { useAppStore } from "../store";
 
@@ -24,7 +24,9 @@ export function RunToolbar() {
   const activeRun = activeRunId ? runs[activeRunId] : null;
   const running =
     activeRun &&
-    ["preparing", "syncing", "running", "stopping"].includes(activeRun.state);
+    ["preparing", "syncing", "starting", "running", "stopping"].includes(activeRun.state);
+
+  useEffect(() => { setEntry(""); }, [workspaceDir]);
 
   const effectiveEntry = entry || openFile || "";
 
@@ -77,7 +79,9 @@ export function RunToolbar() {
   };
 
   const stop = async () => {
-    if (activeRunId) await api.stopRun(activeRunId);
+    try {
+      if (activeRunId) await api.stopRun(activeRunId);
+    } catch (e) { alert(`停止失败: ${e}`); }
   };
 
   const scriptFiles = workspaceFiles.filter(

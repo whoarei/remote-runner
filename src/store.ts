@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api, DeviceProfile, RunEvent, RunStatus, WorkspaceEntry } from "./api";
+import { appendOutput, OutputBuffer } from "./outputBuffer";
 
 interface AppState {
   devices: DeviceProfile[];
@@ -12,7 +13,7 @@ interface AppState {
 
   runs: Record<string, RunStatus>;
   /** 每个 run 的输出缓冲（base64 拼接前的原始字节已转成 string 存储代价大，直接存字节数组） */
-  outputBuffers: Record<string, Uint8Array[]>;
+  outputBuffers: Record<string, OutputBuffer>;
   activeRunId: string | null;
   /** console 需要重绘的信号 */
   consoleSeq: number;
@@ -71,7 +72,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!dir) return;
     try {
       const content = await api.readWorkspaceFile(dir, name);
-      set({ openFile: name, fileContent: content });
+      if (get().workspaceDir === dir) set({ openFile: name, fileContent: content });
     } catch (e) {
       console.error("read file failed", e);
     }
@@ -82,7 +83,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const bytes = Uint8Array.from(atob(ev.data), (c) => c.charCodeAt(0));
       set((s) => {
         const bufs = { ...s.outputBuffers };
-        (bufs[ev.run_id] = bufs[ev.run_id] ?? []).push(bytes);
+        bufs[ev.run_id] = appendOutput(bufs[ev.run_id], bytes);
         return { outputBuffers: bufs, consoleSeq: s.consoleSeq + 1 };
       });
     } else {
@@ -91,7 +92,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }));
       const st = ev.status.state;
       if (st === "exited" || st === "failed" || st === "canceled") {
-        void get().loadHistory();
+        set((s) => ({ history: [ev.status, ...s.history.filter((h) => h.run_id !== ev.status.run_id)].slice(0, 200) }));
       }
     }
   },

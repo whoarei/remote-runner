@@ -36,7 +36,7 @@ export interface RunStatus {
   run_id: string;
   device_name: string;
   label: string;
-  state: string; // preparing | syncing | running | stopping | exited | failed | canceled
+  state: string; // preparing | syncing | starting | running | stopping | exited | failed | canceled
   exit_code: number | null;
   error: string | null;
   started_at: string;

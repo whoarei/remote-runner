@@ -2,7 +2,9 @@ use crate::device::DeviceProfile;
 use crate::error::{Result, RunnerError};
 use crate::ssh::client::SshConnection;
 use crate::ssh::filesync;
-use crate::ssh::session::{self, ConsoleMode, OutputStream, SessionControl, SessionEvent, SpawnSpec};
+use crate::ssh::session::{
+    self, ConsoleMode, OutputStream, SessionControl, SessionEvent, SpawnSpec,
+};
 use chrono::Local;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -125,10 +127,11 @@ const PID_MARKER_SUFFIX: &str = "__";
 impl RunManager {
     pub fn new(config_dir: &std::path::Path, event_tx: mpsc::UnboundedSender<RunEvent>) -> Self {
         let history_path = config_dir.join("history.json");
-        let history = std::fs::read_to_string(&history_path)
+        let mut history = std::fs::read_to_string(&history_path)
             .ok()
             .and_then(|s| serde_json::from_str::<VecDeque<RunStatus>>(&s).ok())
             .unwrap_or_default();
+        history.truncate(HISTORY_LIMIT);
         Self {
             handles: Arc::new(Mutex::new(HashMap::new())),
             history: Arc::new(Mutex::new(history)),
@@ -138,7 +141,17 @@ impl RunManager {
     }
 
     pub fn status(&self, run_id: &str) -> Option<RunStatus> {
-        self.handles.lock().get(run_id).map(|h| h.status.clone())
+        self.handles
+            .lock()
+            .get(run_id)
+            .map(|h| h.status.clone())
+            .or_else(|| {
+                self.history
+                    .lock()
+                    .iter()
+                    .find(|h| h.run_id == run_id)
+                    .cloned()
+            })
     }
 
     pub fn list_running(&self) -> Vec<RunStatus> {
@@ -155,6 +168,9 @@ impl RunManager {
     }
 
     pub fn send_input(&self, run_id: &str, data: Vec<u8>) -> Result<()> {
+        if data == [3] {
+            return self.stop(run_id);
+        }
         self.control(run_id)?
             .send(SessionControl::Input(data))
             .map_err(|_| RunnerError::RunNotFound(run_id.to_string()))
@@ -168,14 +184,20 @@ impl RunManager {
 
     /// 停止：置状态为 stopping 并通知执行循环做分级 kill（INT → TERM → KILL → 本地关闭）
     pub fn stop(&self, run_id: &str) -> Result<()> {
-        let stop_tx = self
-            .handles
-            .lock()
-            .get(run_id)
-            .map(|h| h.stop_tx.clone())
+        let mut handles = self.handles.lock();
+        let h = handles
+            .get_mut(run_id)
             .ok_or_else(|| RunnerError::RunNotFound(run_id.to_string()))?;
-        self.set_state(run_id, "stopping");
-        let _ = stop_tx.send(StopKind::User);
+        if h.status.state == "stopping" {
+            return Ok(());
+        }
+        h.stop_tx
+            .send(StopKind::User)
+            .map_err(|_| RunnerError::RunNotFound(run_id.to_string()))?;
+        h.status.state = "stopping".into();
+        let _ = self.event_tx.send(RunEvent::Status {
+            status: h.status.clone(),
+        });
         Ok(())
     }
 
@@ -190,6 +212,9 @@ impl RunManager {
     fn set_state(&self, run_id: &str, state: &str) {
         let mut map = self.handles.lock();
         if let Some(h) = map.get_mut(run_id) {
+            if h.status.state == "stopping" {
+                return;
+            }
             h.status.state = state.to_string();
             let _ = self.event_tx.send(RunEvent::Status {
                 status: h.status.clone(),
@@ -211,12 +236,9 @@ impl RunManager {
                 None => return,
             }
         };
-        let _ = self.event_tx.send(RunEvent::Status {
-            status: status.clone(),
-        });
         {
             let mut hist = self.history.lock();
-            hist.push_front(status);
+            hist.push_front(status.clone());
             while hist.len() > HISTORY_LIMIT {
                 hist.pop_back();
             }
@@ -229,10 +251,17 @@ impl RunManager {
         }
         // 终态后移除句柄
         self.handles.lock().remove(run_id);
+        let _ = self.event_tx.send(RunEvent::Status { status });
     }
 
-    pub fn start(&self, req: RunRequest, device: DeviceProfile, config_dir: PathBuf) -> Result<String> {
-        let run_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
+    pub fn start(
+        &self,
+        mut req: RunRequest,
+        device: DeviceProfile,
+        config_dir: PathBuf,
+    ) -> Result<String> {
+        validate_request(&mut req)?;
+        let run_id = uuid::Uuid::new_v4().to_string();
         let label = describe_request(&req);
         let status = RunStatus::new(run_id.clone(), device.name.clone(), label);
 
@@ -254,7 +283,7 @@ impl RunManager {
 
         let this = self.clone();
         let rid = run_id.clone();
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             this.execute(rid, req, device, config_dir, stop_rx).await;
         });
         Ok(run_id)
@@ -297,22 +326,25 @@ impl RunManager {
         mut stop_rx: mpsc::UnboundedReceiver<StopKind>,
     ) -> Result<RunOutcome> {
         // 1. 建立 SSH 连接
-        let conn = SshConnection::connect(device, config_dir).await?;
-        if stop_rx.try_recv().is_ok() {
-            return Ok(RunOutcome::Canceled { code: None });
-        }
+        let conn = tokio::select! {
+            biased;
+            _ = stop_rx.recv() => return Ok(RunOutcome::Canceled { code: None }),
+            conn = SshConnection::connect(device, config_dir) => conn?,
+        };
 
         // 2. 同步 workspace（如有）
-        let remote_dir = format!(
-            "{}/{}",
-            device.workspace_root.trim_end_matches('/'),
-            run_id
-        );
+        let remote_dir = format!("{}/{}", device.workspace_root.trim_end_matches('/'), run_id);
         if let Some(local_dir) = &req.workspace_dir {
             self.set_state(run_id, "syncing");
-            let sftp = filesync::open_sftp(&conn).await?;
-            let n =
-                filesync::upload_dir(&sftp, std::path::Path::new(local_dir), &remote_dir).await?;
+            let sync = async {
+                let sftp = filesync::open_sftp(&conn).await?;
+                filesync::upload_dir(&sftp, std::path::Path::new(local_dir), &remote_dir).await
+            };
+            let n = tokio::select! {
+                biased;
+                _ = stop_rx.recv() => return Ok(RunOutcome::Canceled { code: None }),
+                result = sync => result?,
+            };
             tracing::info!("run {run_id}: uploaded {n} files to {remote_dir}");
         }
         if stop_rx.try_recv().is_ok() {
@@ -320,14 +352,14 @@ impl RunManager {
         }
 
         // 3. 构造启动命令（含远程 PID 捕获包装）
-        let command = build_command(req, &remote_dir);
-        tracing::debug!("run {run_id} command: {command}");
+        let marker_prefix = format!("{PID_MARKER_PREFIX}{run_id}_");
+        let command = build_command(req, &remote_dir, &marker_prefix);
 
         // pipe 模式下包装层使用 setsid，远程 PID 即独立进程组 ID，可整组 kill
         let group_kill = req.console_mode == ConsoleMode::Pipe;
 
         // 4. 启动进程
-        self.set_state(run_id, "running");
+        self.set_state(run_id, "starting");
         let (session_tx, mut session_rx) = mpsc::unbounded_channel::<SessionEvent>();
         let proc = session::spawn(
             &conn,
@@ -345,6 +377,7 @@ impl RunManager {
         if let Some(h) = self.handles.lock().get_mut(run_id) {
             h.control = proc.control.clone();
         }
+        self.set_state(run_id, "running");
 
         // 5. 事件循环：转发输出 / 捕获 PID / 处理停止与超时
         let timeout_secs = req.timeout_secs;
@@ -356,7 +389,8 @@ impl RunManager {
 
         let mut exit_code: Option<u32> = None;
         let mut remote_pid: Option<u32> = None;
-        let mut pid_scan_buf: Vec<u8> = Vec::new();
+        let mut pid_scanner = PidScanner::new(marker_prefix);
+        let mut received_exit = false;
         let mut stop_kind: Option<StopKind> = None;
         // 停止升级阶段：1=已发 Ctrl+C/SIGINT，2=已发 kill TERM，3=已发 kill KILL，4=已本地关闭
         let mut stop_stage: u8 = 0;
@@ -383,22 +417,8 @@ impl RunManager {
                         SessionEvent::Output { stream, mut data } => {
                             // 从 stdout 中捕获远程 PID 标记并剥离
                             if remote_pid.is_none() && stream == OutputStream::Stdout {
-                                pid_scan_buf.extend_from_slice(&data);
-                                match extract_pid_marker(&mut pid_scan_buf) {
-                                    Some((pid, rest)) => {
-                                        remote_pid = Some(pid);
-                                        tracing::info!("run {run_id}: remote pid = {pid}");
-                                        data = rest;
-                                    }
-                                    None => {
-                                        if pid_scan_buf.len() <= 64 {
-                                            // 标记未收全，暂不转发
-                                            continue;
-                                        }
-                                        // 放弃扫描，按原样转发
-                                        data = std::mem::take(&mut pid_scan_buf);
-                                    }
-                                }
+                                data = pid_scanner.push(&data);
+                                remote_pid = pid_scanner.pid;
                             }
                             if data.is_empty() {
                                 continue;
@@ -416,8 +436,10 @@ impl RunManager {
                             });
                         }
                         SessionEvent::Exit { code } => {
+                            received_exit = true;
                             exit_code = code;
                         }
+                        SessionEvent::Failed { error } => return Err(RunnerError::TaskFailed(error)),
                         SessionEvent::Closed => break,
                     }
                 }
@@ -435,7 +457,7 @@ impl RunManager {
                     stop_stage = 1;
                     stop_deadline = Some(tokio::time::Instant::now() + Duration::from_secs(3));
                 }
-                _ = sleep_until_timeout => {
+                _ = sleep_until_timeout, if stop_kind.is_none() => {
                     if stop_kind.is_none() {
                         stop_kind = Some(StopKind::Timeout);
                         self.set_state(run_id, "stopping");
@@ -474,12 +496,25 @@ impl RunManager {
             }
         }
 
+        let remaining = std::mem::take(&mut pid_scanner.buffer);
+        if !remaining.is_empty() {
+            use base64::Engine;
+            let _ = self.event_tx.send(RunEvent::Output {
+                run_id: run_id.into(),
+                stream: "stdout".into(),
+                data: base64::engine::general_purpose::STANDARD.encode(remaining),
+            });
+        }
+        if stop_kind.is_none() && !received_exit {
+            return Err(RunnerError::TaskFailed(
+                "SSH channel closed without an exit status".into(),
+            ));
+        }
+
         Ok(match stop_kind {
             None => RunOutcome::Exited { code: exit_code },
             Some(StopKind::User) => RunOutcome::Canceled { code: exit_code },
-            Some(StopKind::Timeout) => RunOutcome::TimedOut {
-                secs: timeout_secs,
-            },
+            Some(StopKind::Timeout) => RunOutcome::TimedOut { secs: timeout_secs },
         })
     }
 }
@@ -491,26 +526,56 @@ enum RunOutcome {
 }
 
 /// 从输出缓冲中提取 `__DEVRUNNER_PID_<digits>__` 标记，返回 (pid, 剩余字节)
-fn extract_pid_marker(buf: &mut Vec<u8>) -> Option<(u32, Vec<u8>)> {
-    let text = String::from_utf8_lossy(buf);
-    let start = text.find(PID_MARKER_PREFIX)?;
-    let after = &text[start + PID_MARKER_PREFIX.len()..];
-    let end = after.find(PID_MARKER_SUFFIX)?;
-    let pid: u32 = after[..end].trim().parse().ok()?;
+struct PidScanner {
+    prefix: Vec<u8>,
+    buffer: Vec<u8>,
+    pid: Option<u32>,
+}
 
-    // 安全地按字节切分（标记本身是 ASCII，直接用字符索引）
-    let marker_end_byte = start + PID_MARKER_PREFIX.len() + end + PID_MARKER_SUFFIX.len();
-    let mut rest = buf.split_off(marker_end_byte);
-    // 丢弃标记前可能存在的字节（正常应为空）
-    buf.clear();
-    // 去掉紧随其后的换行
-    if rest.first() == Some(&b'\r') {
-        rest.remove(0);
+impl PidScanner {
+    fn new(prefix: String) -> Self {
+        Self {
+            prefix: prefix.into_bytes(),
+            buffer: Vec::new(),
+            pid: None,
+        }
     }
-    if rest.first() == Some(&b'\n') {
-        rest.remove(0);
+
+    fn push(&mut self, data: &[u8]) -> Vec<u8> {
+        self.buffer.extend_from_slice(data);
+        let mut output = Vec::new();
+        while !self.buffer.is_empty() {
+            if self.pid.is_some() {
+                output.append(&mut self.buffer);
+                break;
+            }
+            if self.buffer.starts_with(&self.prefix) {
+                if let Some(end) = self.buffer.iter().position(|b| *b == b'\n') {
+                    let line = &self.buffer[self.prefix.len()..end];
+                    let line = line.strip_suffix(b"\r").unwrap_or(line);
+                    self.pid = line
+                        .strip_suffix(PID_MARKER_SUFFIX.as_bytes())
+                        .and_then(|digits| std::str::from_utf8(digits).ok())
+                        .and_then(|digits| digits.parse::<u32>().ok())
+                        .filter(|pid| *pid > 1);
+                    if self.pid.is_some() {
+                        self.buffer.drain(..=end);
+                        continue;
+                    }
+                } else if self.buffer.len() <= self.prefix.len() + 14 {
+                    break;
+                }
+            } else if self.prefix.starts_with(&self.buffer) {
+                break;
+            }
+            // Forward whole spans instead of repeatedly shifting a large output packet.
+            let next = (1..self.buffer.len())
+                .find(|&i| self.buffer[i] == self.prefix[0])
+                .unwrap_or(self.buffer.len());
+            output.extend(self.buffer.drain(..next));
+        }
+        output
     }
-    Some((pid, rest))
 }
 
 /// 通过独立的 exec channel 杀远程进程。
@@ -533,21 +598,23 @@ async fn kill_remote_tree(conn: &SshConnection, pid: u32, sig: &str, group_kill:
         while channel.wait().await.is_some() {}
         Ok::<(), russh::Error>(())
     };
-    if let Err(e) = tokio::time::timeout(Duration::from_secs(5), run).await {
-        tracing::warn!("kill_remote_tree error: {e}");
+    match tokio::time::timeout(Duration::from_secs(5), run).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => tracing::warn!("kill_remote_tree SSH error: {e}"),
+        Err(e) => tracing::warn!("kill_remote_tree timeout: {e}"),
     }
 }
 
 fn is_active(state: &str) -> bool {
-    matches!(state, "preparing" | "syncing" | "running" | "stopping")
+    matches!(
+        state,
+        "preparing" | "syncing" | "starting" | "running" | "stopping"
+    )
 }
 
 fn describe_request(req: &RunRequest) -> String {
     match req.kind {
-        ScriptKind::Command => req
-            .command
-            .clone()
-            .unwrap_or_else(|| "command".to_string()),
+        ScriptKind::Command => req.command.clone().unwrap_or_else(|| "command".to_string()),
         _ => req.entry.clone().unwrap_or_else(|| "script".to_string()),
     }
 }
@@ -557,18 +624,99 @@ fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+fn validate_request(req: &mut RunRequest) -> Result<()> {
+    let invalid = |message: &str| RunnerError::InvalidInput(message.into());
+    if req.cols == 0 || req.rows == 0 || req.cols > 4096 || req.rows > 4096 {
+        return Err(invalid("console dimensions must be between 1 and 4096"));
+    }
+    if req.timeout_secs > 31_536_000 {
+        return Err(invalid("timeout must not exceed one year"));
+    }
+    for (key, value) in &req.env {
+        let mut chars = key.chars();
+        if !chars
+            .next()
+            .is_some_and(|c| c == '_' || c.is_ascii_alphabetic())
+            || !chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+            || value.contains('\0')
+        {
+            return Err(invalid("invalid environment variable"));
+        }
+    }
+    if req.args.iter().any(|a| a.contains('\0')) {
+        return Err(invalid("arguments cannot contain NUL"));
+    }
+    let workspace = req
+        .workspace_dir
+        .as_ref()
+        .map(std::fs::canonicalize)
+        .transpose()?;
+    if workspace.as_ref().is_some_and(|p| !p.is_dir()) {
+        return Err(invalid("workspace must be a directory"));
+    }
+    match req.kind {
+        ScriptKind::Command => {
+            if !req
+                .command
+                .as_ref()
+                .is_some_and(|c| !c.trim().is_empty() && !c.contains('\0'))
+            {
+                return Err(invalid("command must not be empty or contain NUL"));
+            }
+        }
+        _ => {
+            let root = workspace
+                .as_ref()
+                .ok_or_else(|| invalid("script requires a workspace"))?;
+            let entry = req
+                .entry
+                .as_ref()
+                .ok_or_else(|| invalid("script requires an entry"))?;
+            let entry = entry.replace('\\', "/");
+            if entry.is_empty()
+                || entry.contains(['\0', ':'])
+                || entry
+                    .split('/')
+                    .any(|p| p.is_empty() || p == "." || p == "..")
+            {
+                return Err(invalid(
+                    "entry must be a relative path inside the workspace",
+                ));
+            }
+            let mut path = root.clone();
+            for part in entry.split('/') {
+                path.push(part);
+                if std::fs::symlink_metadata(&path)?.file_type().is_symlink() {
+                    return Err(invalid(
+                        "symbolic links are not supported for script entries",
+                    ));
+                }
+            }
+            let resolved = std::fs::canonicalize(&path)?;
+            if !resolved.starts_with(root) || !resolved.is_file() {
+                return Err(invalid("entry must be a file inside the workspace"));
+            }
+            req.entry = Some(entry);
+        }
+    }
+    if let Some(root) = workspace {
+        req.workspace_dir = Some(root.to_string_lossy().into_owned());
+    }
+    Ok(())
+}
+
 /// 构造最终在设备上执行的命令行。
 ///
 /// 形式：
-///   echo <base64> | base64 -d | sh & __pid=$!; printf '__DEVRUNNER_PID_%s__\n' "$__pid"; wait $__pid
+///   mktemp → decode script → background process with channel stdin → PID → wait
 ///
 /// 脚本体的 base64 编码避免一切嵌套引号问题；包装层捕获远程 PID 用于可靠的 stop/timeout kill；
 /// `wait` 将进程退出码原样传递为 channel 的 exit-status。
-fn build_command(req: &RunRequest, remote_dir: &str) -> String {
+fn build_command(req: &RunRequest, remote_dir: &str, marker_prefix: &str) -> String {
     let env_prefix = req
         .env
         .iter()
-        .map(|(k, v)| format!("{}={}", k, sh_quote(v)))
+        .map(|(k, v)| format!("export {}={};", k, sh_quote(v)))
         .collect::<Vec<_>>()
         .join(" ");
 
@@ -582,7 +730,11 @@ fn build_command(req: &RunRequest, remote_dir: &str) -> String {
                 .collect::<Vec<_>>()
                 .join(" ");
             // exec 使 sh 直接替换为目标进程，PID 即 python 进程
-            format!("{env_prefix} exec python3 -u {} {}", sh_quote(entry), args)
+            format!(
+                "exec python3 -u {} {}",
+                sh_quote(&format!("./{entry}")),
+                args
+            )
         }
         ScriptKind::Shell => {
             let entry = req.entry.as_deref().unwrap_or("main.sh");
@@ -592,15 +744,18 @@ fn build_command(req: &RunRequest, remote_dir: &str) -> String {
                 .map(|a| sh_quote(a))
                 .collect::<Vec<_>>()
                 .join(" ");
-            format!("{env_prefix} exec bash {} {}", sh_quote(entry), args)
+            format!("exec bash {} {}", sh_quote(&format!("./{entry}")), args)
         }
         ScriptKind::Command => req.command.clone().unwrap_or_default(),
     };
 
     let script = if req.workspace_dir.is_some() {
-        format!("cd {} && {}", sh_quote(remote_dir), body)
+        format!(
+            "cd {} || exit $?; {env_prefix} {body}",
+            sh_quote(remote_dir)
+        )
     } else {
-        body
+        format!("{env_prefix} {body}")
     };
 
     use base64::Engine;
@@ -615,8 +770,144 @@ fn build_command(req: &RunRequest, remote_dir: &str) -> String {
         ConsoleMode::Pty => "",
     };
     format!(
-        "__f=/tmp/.devrunner-wrap-$$.sh; echo {b64} | base64 -d > $__f; exec 3<&0; \
+        "umask 077; __f=$(mktemp /tmp/.devrunner-wrap-XXXXXXXXXX) || exit 1; trap 'rm -f -- \"$__f\"' EXIT; echo {b64} | base64 -d > \"$__f\" || exit 1; exec 3<&0; \
          {setsid}sh $__f <&3 & __pid=$!; \
-         printf '{PID_MARKER_PREFIX}%s{PID_MARKER_SUFFIX}\\n' \"$__pid\"; wait $__pid; __rc=$?; rm -f $__f; exit $__rc"
+         printf '{marker_prefix}%s{PID_MARKER_SUFFIX}\\n' \"$__pid\"; wait $__pid; __rc=$?; exit $__rc"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine;
+
+    fn request() -> RunRequest {
+        serde_json::from_value(serde_json::json!({
+            "device_id": "test", "kind": "command", "command": "true"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn pid_marker_preserves_binary_output_at_every_packet_boundary() {
+        let prefix = "__DEVRUNNER_PID_test_";
+        let input = b"\xffbefore\n__DEVRUNNER_PID_test_123__\r\nafter\xe4\xb8\xad";
+        for split in 0..=input.len() {
+            let mut scanner = PidScanner::new(prefix.into());
+            let mut output = scanner.push(&input[..split]);
+            output.extend(scanner.push(&input[split..]));
+            output.extend_from_slice(&scanner.buffer);
+            assert_eq!(scanner.pid, Some(123), "split {split}");
+            assert_eq!(output, b"\xffbefore\nafter\xe4\xb8\xad", "split {split}");
+        }
+    }
+
+    #[test]
+    fn pid_scanner_does_not_swallow_short_or_invalid_output() {
+        for input in [
+            b"hello".as_slice(),
+            b"__DEVRUNNER_PID_test_0__\n",
+            b"__DEVRUNNER_PID_test_12",
+        ] {
+            let mut scanner = PidScanner::new("__DEVRUNNER_PID_test_".into());
+            let mut output = Vec::new();
+            for byte in input {
+                output.extend(scanner.push(&[*byte]));
+            }
+            output.extend_from_slice(&scanner.buffer);
+            assert_eq!(output, input);
+            assert_eq!(scanner.pid, None);
+        }
+    }
+
+    #[test]
+    fn validates_commands_and_environment_before_start() {
+        let mut req = request();
+        req.command = Some(" ".into());
+        assert!(validate_request(&mut req).is_err());
+        req.command = Some("true".into());
+        req.env.insert("X; touch /tmp/injected".into(), "1".into());
+        assert!(validate_request(&mut req).is_err());
+        req.env.clear();
+        req.env.insert("VALID_1".into(), "quotes ' and $()".into());
+        assert!(validate_request(&mut req).is_ok());
+    }
+
+    #[test]
+    fn validates_script_entry_and_normalizes_windows_paths() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub/test.py"), "print(1)").unwrap();
+        let mut req = request();
+        req.kind = ScriptKind::Python;
+        req.workspace_dir = Some(root.to_string_lossy().into_owned());
+        for entry in ["../test.py", "/test.py", "C:/test.py", "sub", "missing.py"] {
+            req.entry = Some(entry.into());
+            assert!(validate_request(&mut req).is_err(), "{entry}");
+        }
+        req.entry = Some("sub\\test.py".into());
+        validate_request(&mut req).unwrap();
+        assert_eq!(req.entry.as_deref(), Some("sub/test.py"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn command_environment_is_exported_and_script_names_are_not_options() {
+        let mut req = request();
+        req.env.insert("VALUE".into(), "a'b".into());
+        req.command = Some("printf '%s' \"$VALUE\"; true".into());
+        let decode = |req: &RunRequest| {
+            let command = build_command(req, "/tmp/ws", "marker_");
+            let encoded = command
+                .split("echo ")
+                .nth(1)
+                .unwrap()
+                .split_whitespace()
+                .next()
+                .unwrap();
+            String::from_utf8(
+                base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .unwrap(),
+            )
+            .unwrap()
+        };
+        let script = decode(&req);
+        assert!(script.contains("export VALUE='a'\\''b';"));
+        assert!(script.contains("printf '%s' \"$VALUE\"; true"));
+        req.kind = ScriptKind::Python;
+        req.entry = Some("-test.py".into());
+        assert!(decode(&req).contains("python3 -u './-test.py'"));
+    }
+
+    #[test]
+    fn terminal_event_is_published_after_history_and_remains_queryable() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let (events, mut rx) = mpsc::unbounded_channel();
+        let manager = RunManager::new(&root, events);
+        let (control, _) = mpsc::unbounded_channel();
+        let (stop_tx, _stop_rx) = mpsc::unbounded_channel();
+        manager.handles.lock().insert(
+            "run".into(),
+            RunHandle {
+                control,
+                stop_tx,
+                status: RunStatus::new("run".into(), "device".into(), "test".into()),
+            },
+        );
+        manager.stop("run").unwrap();
+        manager.set_state("run", "running");
+        assert_eq!(manager.status("run").unwrap().state, "stopping");
+        manager.finish("run", "canceled", Some(143), None);
+        while let Ok(event) = rx.try_recv() {
+            if let RunEvent::Status { status } = event {
+                if status.state == "canceled" {
+                    assert_eq!(manager.history()[0].run_id, "run");
+                    assert_eq!(manager.status("run").unwrap().exit_code, Some(143));
+                    assert!(manager.list_running().is_empty());
+                }
+            }
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

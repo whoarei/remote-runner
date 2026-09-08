@@ -12,8 +12,7 @@ use tauri::Manager;
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -27,8 +26,7 @@ pub fn run() {
             std::fs::create_dir_all(&config_dir).ok();
             tracing::info!("config dir: {}", config_dir.display());
 
-            let (event_tx, mut event_rx) =
-                tokio::sync::mpsc::unbounded_channel::<RunEvent>();
+            let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<RunEvent>();
 
             let state = AppState {
                 run_manager: RunManager::new(&config_dir, event_tx),

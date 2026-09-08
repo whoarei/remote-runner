@@ -42,8 +42,7 @@ pub async fn test_device(
     state: tauri::State<'_, AppState>,
     device: DeviceProfile,
 ) -> Result<String> {
-    let conn =
-        crate::ssh::client::SshConnection::connect(&device, &state.config_dir).await?;
+    let conn = crate::ssh::client::SshConnection::connect(&device, &state.config_dir).await?;
     let channel = conn.handle.channel_open_session().await?;
     channel
         .exec(true, "uname -a && python3 --version 2>&1; echo EXIT:$?")

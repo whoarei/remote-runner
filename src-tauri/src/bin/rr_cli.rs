@@ -25,17 +25,27 @@ async fn main() {
     let mut host = "172.16.0.67".to_string();
     let mut user = "root".to_string();
     let mut rest = args.as_slice();
-    if !rest.is_empty() && !matches!(rest[0].as_str(), "command" | "python" | "shell" | "interact-test" | "stop-test") {
+    if !rest.is_empty()
+        && !matches!(
+            rest[0].as_str(),
+            "command" | "python" | "shell" | "interact-test" | "stop-test"
+        )
+    {
         host = rest[0].clone();
         rest = &rest[1..];
-        if !rest.is_empty() && !matches!(rest[0].as_str(), "command" | "python" | "shell" | "interact-test" | "stop-test") {
+        if !rest.is_empty()
+            && !matches!(
+                rest[0].as_str(),
+                "command" | "python" | "shell" | "interact-test" | "stop-test"
+            )
+        {
             user = rest[0].clone();
             rest = &rest[1..];
         }
     }
 
     let mode = rest.first().cloned().unwrap_or_default();
-    let params = &rest[1..];
+    let params = rest.get(1..).unwrap_or_default();
 
     // 自检模式：pty 交互 / stop 取消
     if mode == "interact-test" || mode == "stop-test" {
@@ -238,7 +248,10 @@ async fn main() {
                 }
             }
             RunEvent::Status { status } => {
-                eprintln!("[rr-cli] state={} exit={:?} err={:?}", status.state, status.exit_code, status.error);
+                eprintln!(
+                    "[rr-cli] state={} exit={:?} err={:?}",
+                    status.state, status.exit_code, status.error
+                );
                 match status.state.as_str() {
                     "exited" => {
                         exit_code = status.exit_code;

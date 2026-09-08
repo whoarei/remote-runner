@@ -25,16 +25,18 @@ export function RunConsole() {
       fontSize: 13,
       fontFamily: "Consolas, 'Cascadia Mono', monospace",
       theme: { background: "#1e1f24" },
-      convertEol: false,
+      convertEol: true,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(containerRef.current);
     fit.fit();
 
-    term.onData((data) => {
-      const runId = useAppStore.getState().activeRunId;
-      if (runId) void api.sendRunInput(runId, data).catch(() => {});
+    const input = term.onData((data) => {
+      const { activeRunId: runId, runs } = useAppStore.getState();
+      if (runId && runs[runId]?.state === "running") {
+        void api.sendRunInput(runId, data).catch(() => {});
+      }
     });
 
     // Ctrl+C：优先作为远程进程的 SIGINT（无选中文本时）
@@ -42,9 +44,13 @@ export function RunConsole() {
       if (ev.type !== "keydown") return true;
       if (ev.ctrlKey && ev.key === "c") {
         const sel = term.getSelection();
+        if (sel) {
+          void navigator.clipboard.writeText(sel).catch(() => {});
+          return false;
+        }
         if (!sel) {
           const runId = useAppStore.getState().activeRunId;
-          if (runId) void api.sendRunInput(runId, "\x03").catch(() => {});
+          if (runId) void api.stopRun(runId).catch(() => {});
           return false;
         }
       }
@@ -62,7 +68,15 @@ export function RunConsole() {
       }
     });
     observer.observe(containerRef.current);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      input.dispose();
+      term.dispose();
+      termRef.current = null;
+      fitRef.current = null;
+      writtenRef.current = {};
+      lastRunRef.current = null;
+    };
   }, []);
 
   // 输出写入 / 切换 run 时重放缓冲
@@ -83,20 +97,33 @@ export function RunConsole() {
     }
 
     if (!activeRunId) return;
-    const chunks = outputBuffers[activeRunId] ?? [];
-    const written = writtenRef.current[activeRunId] ?? 0;
-    // chunks 按追加顺序写入；用计数比对简化（store 里只增不减）
-    if (chunks.length > written) {
-      for (let i = written; i < chunks.length; i++) {
+    const buffer = outputBuffers[activeRunId];
+    if (!buffer) return;
+    const { chunks, start } = buffer;
+    let written = writtenRef.current[activeRunId] ?? 0;
+    if (written < start) {
+      term.reset();
+      term.writeln("[较早的输出已超过缓冲上限，仅保留最近 2 MiB / 4096 个数据块]");
+      written = start;
+    }
+    if (start + chunks.length > written) {
+      for (let i = written - start; i < chunks.length; i++) {
         term.write(chunks[i]);
       }
-      writtenRef.current[activeRunId] = chunks.length;
+      writtenRef.current[activeRunId] = start + chunks.length;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRunId, consoleSeq]);
 
   // 状态行
   const activeRun = activeRunId ? runs[activeRunId] : null;
+
+  useEffect(() => {
+    const term = termRef.current;
+    if (term && activeRunId && activeRun?.state === "running") {
+      void api.resizeRunConsole(activeRunId, term.cols, term.rows).catch(() => {});
+    }
+  }, [activeRunId, activeRun?.state]);
 
   return (
     <div className="run-console">

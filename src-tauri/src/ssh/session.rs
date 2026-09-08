@@ -22,6 +22,7 @@ pub enum OutputStream {
 pub enum SessionEvent {
     Output { stream: OutputStream, data: Vec<u8> },
     Exit { code: Option<u32> },
+    Failed { error: String },
     Closed,
 }
 
@@ -29,11 +30,14 @@ pub enum SessionEvent {
 #[derive(Debug)]
 pub enum SessionControl {
     Input(Vec<u8>),
-    Resize { cols: u32, rows: u32 },
+    Resize {
+        cols: u32,
+        rows: u32,
+    },
     /// Ctrl+C 语义：PTY 下发 0x03；pipe 下发 SIGINT
     Interrupt,
     Terminate,
-    /// 强制关闭 channel（远程进程随 channel 关闭被杀死）
+    /// 尽力发送 KILL 并关闭 channel；远程进程仍需上层按 PID 清理。
     Kill,
 }
 
@@ -47,6 +51,13 @@ pub struct SpawnSpec {
 /// 一次远程进程的运行实例（设计文档中的 ProcessSession）
 pub struct ProcessSession {
     pub control: mpsc::UnboundedSender<SessionControl>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for ProcessSession {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
 
 pub async fn spawn(
@@ -54,22 +65,35 @@ pub async fn spawn(
     spec: SpawnSpec,
     event_tx: mpsc::UnboundedSender<SessionEvent>,
 ) -> Result<ProcessSession> {
-    let mut channel = conn.handle.channel_open_session().await?;
+    let mut channel = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        conn.handle.channel_open_session(),
+    )
+    .await
+    .map_err(|_| crate::error::RunnerError::Ssh("SSH channel open timed out".into()))??;
+    let mut pending = std::collections::VecDeque::new();
 
     if spec.mode == ConsoleMode::Pty {
         channel
-            .request_pty(false, "xterm-256color", spec.cols, spec.rows, 0, 0, &[])
+            .request_pty(true, "xterm-256color", spec.cols, spec.rows, 0, 0, &[])
             .await?;
+        await_success(&mut channel, &mut pending).await?;
     }
     channel.exec(true, spec.command.as_str()).await?;
+    await_success(&mut channel, &mut pending).await?;
 
     let (control_tx, mut control_rx) = mpsc::unbounded_channel::<SessionControl>();
     let pty = spec.mode == ConsoleMode::Pty;
 
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         loop {
             tokio::select! {
-                msg = channel.wait() => {
+                msg = async {
+                    match pending.pop_front() {
+                        Some(message) => Some(message),
+                        None => channel.wait().await,
+                    }
+                } => {
                     tracing::debug!("channel msg: {:?}", msg.as_ref().map(|m| std::mem::discriminant(m)));
                     match msg {
                         None => {
@@ -93,8 +117,11 @@ pub async fn spawn(
                         Some(ChannelMsg::ExitSignal { .. }) => {
                             let _ = event_tx.send(SessionEvent::Exit { code: None });
                         }
-                        Some(ChannelMsg::Eof) => {
-                            let _ = channel.close().await;
+                        // EOF only ends output; exit-status can arrive afterwards.
+                        Some(ChannelMsg::Eof) => {}
+                        Some(ChannelMsg::Failure) => {
+                            let _ = event_tx.send(SessionEvent::Failed { error: "SSH request rejected".into() });
+                            break;
                         }
                         Some(ChannelMsg::Close) => {
                             let _ = event_tx.send(SessionEvent::Closed);
@@ -104,12 +131,12 @@ pub async fn spawn(
                     }
                 }
                 ctl = control_rx.recv() => {
-                    tracing::debug!("control msg: {:?}", ctl);
                     match ctl {
                         None => {
                             if let Err(e) = channel.close().await {
                                 tracing::warn!("close failed: {e}");
                             }
+                            break;
                         }
                         Some(SessionControl::Input(bytes)) => {
                             if let Err(e) = channel.data(&bytes[..]).await {
@@ -151,5 +178,29 @@ pub async fn spawn(
         }
     });
 
-    Ok(ProcessSession { control: control_tx })
+    Ok(ProcessSession {
+        control: control_tx,
+        task,
+    })
+}
+
+async fn await_success(
+    channel: &mut russh::Channel<russh::client::Msg>,
+    pending: &mut std::collections::VecDeque<ChannelMsg>,
+) -> Result<()> {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            match channel.wait().await {
+                Some(ChannelMsg::Success) => return Ok(()),
+                None | Some(ChannelMsg::Failure | ChannelMsg::Close) => {
+                    return Err(crate::error::RunnerError::Ssh(
+                        "SSH process request rejected or channel closed".into(),
+                    ))
+                }
+                Some(message) => pending.push_back(message),
+            }
+        }
+    })
+    .await
+    .map_err(|_| crate::error::RunnerError::Ssh("SSH process request timed out".into()))?
 }
