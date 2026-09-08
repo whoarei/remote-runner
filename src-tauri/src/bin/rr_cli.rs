@@ -65,6 +65,8 @@ async fn main() {
         .unwrap();
 
         let device = DeviceProfile {
+            transport: Default::default(),
+            serial: None,
             id: "cli-device".to_string(),
             name: format!("{user}@{host}"),
             host: host.clone(),
@@ -202,6 +204,8 @@ async fn main() {
     std::fs::create_dir_all(&config_dir).ok();
 
     let device = DeviceProfile {
+        transport: Default::default(),
+        serial: None,
         id: "cli-device".to_string(),
         name: format!("{user}@{host}"),
         host,

@@ -1,4 +1,4 @@
-use crate::device::DeviceProfile;
+use crate::device::{DeviceProfile, TransportKind};
 use crate::error::{Result, RunnerError};
 use crate::ssh::client::SshConnection;
 use crate::ssh::filesync;
@@ -106,6 +106,7 @@ enum StopKind {
 }
 
 struct RunHandle {
+    _serial_lease: Option<crate::serial::transport::PortLease>,
     control: mpsc::UnboundedSender<SessionControl>,
     stop_tx: mpsc::UnboundedSender<StopKind>,
     status: RunStatus,
@@ -177,6 +178,16 @@ impl RunManager {
     }
 
     pub fn resize(&self, run_id: &str, cols: u32, rows: u32) -> Result<()> {
+        if self
+            .handles
+            .lock()
+            .get(run_id)
+            .is_some_and(|h| h._serial_lease.is_some())
+        {
+            return Err(RunnerError::InvalidInput(
+                "serial shell cannot resize a running process; dimensions are set at launch".into(),
+            ));
+        }
         self.control(run_id)?
             .send(SessionControl::Resize { cols, rows })
             .map_err(|_| RunnerError::RunNotFound(run_id.to_string()))
@@ -260,7 +271,21 @@ impl RunManager {
         device: DeviceProfile,
         config_dir: PathBuf,
     ) -> Result<String> {
+        device.validate()?;
         validate_request(&mut req)?;
+        let serial_lease = if device.transport == TransportKind::Serial {
+            if req.console_mode == ConsoleMode::Pipe {
+                return Err(RunnerError::InvalidInput(
+                    "serial shell has one combined console stream; pipe mode is not supported"
+                        .into(),
+                ));
+            }
+            Some(crate::serial::transport::PortLease::acquire(
+                &device.serial.as_ref().unwrap().port,
+            )?)
+        } else {
+            None
+        };
         let run_id = uuid::Uuid::new_v4().to_string();
         let label = describe_request(&req);
         let status = RunStatus::new(run_id.clone(), device.name.clone(), label);
@@ -272,6 +297,7 @@ impl RunManager {
         self.handles.lock().insert(
             run_id.clone(),
             RunHandle {
+                _serial_lease: serial_lease,
                 control: placeholder,
                 stop_tx,
                 status: status.clone(),
@@ -325,6 +351,9 @@ impl RunManager {
         config_dir: &std::path::Path,
         mut stop_rx: mpsc::UnboundedReceiver<StopKind>,
     ) -> Result<RunOutcome> {
+        if device.transport == TransportKind::Serial {
+            return self.execute_serial(run_id, req, device, stop_rx).await;
+        }
         // 1. 建立 SSH 连接
         let conn = tokio::select! {
             biased;
@@ -517,6 +546,80 @@ impl RunManager {
             Some(StopKind::Timeout) => RunOutcome::TimedOut { secs: timeout_secs },
         })
     }
+
+    async fn execute_serial(
+        &self,
+        run_id: &str,
+        req: &RunRequest,
+        device: &DeviceProfile,
+        mut stop_rx: mpsc::UnboundedReceiver<StopKind>,
+    ) -> Result<RunOutcome> {
+        use crate::serial::{self, Event, StopReason};
+        use base64::Engine;
+        if stop_rx.try_recv().is_ok() {
+            return Ok(RunOutcome::Canceled { code: None });
+        }
+        let files = if let Some(dir) = req.workspace_dir.clone() {
+            tokio::task::spawn_blocking(move || {
+                serial::filesync::collect(std::path::Path::new(&dir))
+            })
+            .await
+            .map_err(|e| RunnerError::TaskFailed(e.to_string()))??
+        } else {
+            Vec::new()
+        };
+        if stop_rx.try_recv().is_ok() {
+            return Ok(RunOutcome::Canceled { code: None });
+        }
+        let config = device.serial.as_ref().unwrap();
+        let port = serial::transport::open(config)?;
+        let (control, mut controls) = mpsc::unbounded_channel();
+        if let Some(handle) = self.handles.lock().get_mut(run_id) {
+            handle.control = control.clone();
+        }
+        let remote = format!("{}/{}", device.workspace_root.trim_end_matches('/'), run_id);
+        let execution = serial::execute(
+            port,
+            config.baud_rate,
+            req,
+            &remote,
+            files,
+            &mut controls,
+            |event| match event {
+                Event::State(state) => self.set_state(run_id, state),
+                Event::Output(data) => {
+                    let _ = self.event_tx.send(RunEvent::Output {
+                        run_id: run_id.into(),
+                        stream: "stdout".into(),
+                        data: base64::engine::general_purpose::STANDARD.encode(data),
+                    });
+                }
+            },
+        );
+        tokio::pin!(execution);
+        let mut stop_sent = false;
+        let result = loop {
+            tokio::select! {
+                biased;
+                _ = stop_rx.recv(), if !stop_sent => {
+                    stop_sent = true;
+                    let _ = control.send(SessionControl::Interrupt);
+                }
+                result = &mut execution => break result?,
+            }
+        };
+        Ok(match result.stopped {
+            Some(StopReason::User) => RunOutcome::Canceled {
+                code: Some(result.code),
+            },
+            Some(StopReason::Timeout) => RunOutcome::TimedOut {
+                secs: req.timeout_secs,
+            },
+            None => RunOutcome::Exited {
+                code: Some(result.code),
+            },
+        })
+    }
 }
 
 enum RunOutcome {
@@ -620,7 +723,7 @@ fn describe_request(req: &RunRequest) -> String {
 }
 
 /// shell 单引号包裹并转义
-fn sh_quote(s: &str) -> String {
+pub(crate) fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
@@ -712,7 +815,7 @@ fn validate_request(req: &mut RunRequest) -> Result<()> {
 ///
 /// 脚本体的 base64 编码避免一切嵌套引号问题；包装层捕获远程 PID 用于可靠的 stop/timeout kill；
 /// `wait` 将进程退出码原样传递为 channel 的 exit-status。
-fn build_command(req: &RunRequest, remote_dir: &str, marker_prefix: &str) -> String {
+pub(crate) fn build_script(req: &RunRequest, remote_dir: &str) -> String {
     let env_prefix = req
         .env
         .iter()
@@ -749,15 +852,18 @@ fn build_command(req: &RunRequest, remote_dir: &str, marker_prefix: &str) -> Str
         ScriptKind::Command => req.command.clone().unwrap_or_default(),
     };
 
-    let script = if req.workspace_dir.is_some() {
+    if req.workspace_dir.is_some() {
         format!(
             "cd {} || exit $?; {env_prefix} {body}",
             sh_quote(remote_dir)
         )
     } else {
         format!("{env_prefix} {body}")
-    };
+    }
+}
 
+fn build_command(req: &RunRequest, remote_dir: &str, marker_prefix: &str) -> String {
+    let script = build_script(req, remote_dir);
     use base64::Engine;
     let b64 = base64::engine::general_purpose::STANDARD.encode(script.as_bytes());
     // pipe 模式用 setsid 让脚本独立成进程组（可整组原子 kill）；
@@ -890,6 +996,7 @@ mod tests {
         manager.handles.lock().insert(
             "run".into(),
             RunHandle {
+                _serial_lease: None,
                 control,
                 stop_tx,
                 status: RunStatus::new("run".into(), "device".into(), "test".into()),

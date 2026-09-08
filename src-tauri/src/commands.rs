@@ -42,6 +42,10 @@ pub async fn test_device(
     state: tauri::State<'_, AppState>,
     device: DeviceProfile,
 ) -> Result<String> {
+    device.validate()?;
+    if device.transport == crate::device::TransportKind::Serial {
+        return crate::serial::test_device(&device).await;
+    }
     let conn = crate::ssh::client::SshConnection::connect(&device, &state.config_dir).await?;
     let channel = conn.handle.channel_open_session().await?;
     channel
@@ -68,6 +72,11 @@ pub async fn test_device(
 }
 
 // ---------- 工作区 ----------
+
+#[tauri::command]
+pub fn list_serial_ports() -> Result<Vec<String>> {
+    crate::serial::transport::available_ports()
+}
 
 #[tauri::command]
 pub fn list_workspace(dir: String) -> Result<Vec<WorkspaceEntry>> {

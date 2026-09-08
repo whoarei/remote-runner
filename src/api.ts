@@ -8,6 +8,8 @@ export type AuthMethod =
 export interface DeviceProfile {
   id: string;
   name: string;
+  transport: "ssh" | "serial";
+  serial?: { port: string; baud_rate: number } | null;
   host: string;
   port: number;
   username: string;
@@ -59,6 +61,7 @@ export const api = {
   deleteDevice: (id: string) => invoke<void>("delete_device", { id }),
   testDevice: (device: DeviceProfile) =>
     invoke<string>("test_device", { device }),
+  listSerialPorts: () => invoke<string[]>("list_serial_ports"),
 
   listWorkspace: (dir: string) =>
     invoke<WorkspaceEntry[]>("list_workspace", { dir }),

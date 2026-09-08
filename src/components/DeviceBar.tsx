@@ -5,6 +5,8 @@ import { useAppStore } from "../store";
 const emptyDevice = (): DeviceProfile => ({
   id: "",
   name: "",
+  transport: "ssh",
+  serial: { port: "", baud_rate: 115200 },
   host: "",
   port: 22,
   username: "root",
@@ -16,11 +18,20 @@ export function DeviceBar() {
   const { devices, selectedDeviceId, selectDevice, loadDevices } = useAppStore();
   const [editing, setEditing] = useState<DeviceProfile | null>(null);
   const [testResult, setTestResult] = useState<string | null>(null);
+  const [ports, setPorts] = useState<string[]>([]);
+  const [testing, setTesting] = useState(false);
+
+  const refreshPorts = async () => {
+    try { setPorts(await api.listSerialPorts()); }
+    catch (e) { setTestResult(`串口枚举失败: ${e}`); }
+  };
 
   const save = async (d: DeviceProfile) => {
-    await api.saveDevice(d);
-    await loadDevices();
-    setEditing(null);
+    try {
+      await api.saveDevice(d);
+      await loadDevices();
+      setEditing(null);
+    } catch (e) { setTestResult(`保存失败: ${e}`); }
   };
 
   const remove = async (d: DeviceProfile) => {
@@ -32,11 +43,12 @@ export function DeviceBar() {
 
   const test = async (d: DeviceProfile) => {
     setTestResult("connecting...");
+    setTesting(true);
     try {
       setTestResult(await api.testDevice(d));
     } catch (e) {
       setTestResult(`FAILED: ${e}`);
-    }
+    } finally { setTesting(false); }
   };
 
   return (
@@ -49,16 +61,16 @@ export function DeviceBar() {
         {devices.length === 0 && <option value="">（无设备，请先添加）</option>}
         {devices.map((d) => (
           <option key={d.id} value={d.id}>
-            {d.name} ({d.username}@{d.host})
+            {d.name} ({d.transport === "serial" ? `${d.serial?.port} · ${d.serial?.baud_rate}` : `${d.username}@${d.host}`})
           </option>
         ))}
       </select>
-      <button onClick={() => setEditing(emptyDevice())}>+ 添加设备</button>
+      <button onClick={() => { setTestResult(null); setEditing(emptyDevice()); }}>+ 添加设备</button>
       {selectedDeviceId && (
         <button
           onClick={() => {
             const d = devices.find((x) => x.id === selectedDeviceId);
-            if (d) setEditing({ ...d });
+            if (d) { setTestResult(null); setEditing({ ...d }); }
           }}
         >
           编辑
@@ -76,6 +88,34 @@ export function DeviceBar() {
                 onChange={(e) => setEditing({ ...editing, name: e.target.value })}
               />
             </label>
+            <label>
+              连接方式
+              <select value={editing.transport} disabled={testing} onChange={(e) => {
+                const transport = e.target.value as DeviceProfile["transport"];
+                setEditing({ ...editing, transport, serial: editing.serial ?? { port: "", baud_rate: 115200 } });
+                setTestResult(null);
+                if (transport === "serial") void refreshPorts();
+              }}>
+                <option value="ssh">SSH</option>
+                <option value="serial">串口</option>
+              </select>
+            </label>
+            {editing.transport === "serial" ? <>
+              <label>
+                串口
+                <input list="serial-ports" value={editing.serial?.port ?? ""} placeholder="COM8 或 /dev/ttyUSB0"
+                  onChange={(e) => setEditing({ ...editing, serial: { port: e.target.value, baud_rate: editing.serial?.baud_rate ?? 115200 } })} />
+                <datalist id="serial-ports">{ports.map((port) => <option key={port} value={port} />)}</datalist>
+                <button type="button" onClick={refreshPorts}>刷新端口</button>
+              </label>
+              <label>
+                波特率
+                <input type="number" min={1} max={4000000} list="serial-baud-rates" value={editing.serial?.baud_rate ?? 115200}
+                  onChange={(e) => setEditing({ ...editing, serial: { port: editing.serial?.port ?? "", baud_rate: Number(e.target.value) } })} />
+                <datalist id="serial-baud-rates">{[9600, 57600, 115200, 230400, 460800, 921600, 1500000].map((rate) => <option key={rate} value={rate} />)}</datalist>
+              </label>
+              <p>8N1，无流控。设备串口需已登录 Linux shell；测试连接会执行探测命令。同一串口一次只能运行一个任务。</p>
+            </> : <>
             <label>
               Host
               <input
@@ -151,6 +191,7 @@ export function DeviceBar() {
                 />
               </label>
             )}
+            </>}
             <label>
               远程工作区根目录
               <input
@@ -161,7 +202,7 @@ export function DeviceBar() {
               />
             </label>
             <div className="modal-actions">
-              <button onClick={() => test(editing)}>测试连接</button>
+              <button disabled={testing} onClick={() => test(editing)}>测试连接</button>
               {editing.id && (
                 <button className="danger" onClick={() => remove(editing)}>
                   删除
@@ -169,7 +210,7 @@ export function DeviceBar() {
               )}
               <button
                 className="primary"
-                disabled={!editing.name || !editing.host}
+                disabled={testing || !editing.name || (editing.transport === "serial" ? !editing.serial?.port || !editing.serial?.baud_rate : !editing.host)}
                 onClick={() => save(editing)}
               >
                 保存

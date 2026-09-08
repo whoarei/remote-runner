@@ -8,6 +8,9 @@ pub enum RunnerError {
     #[error("ssh error: {0}")]
     Ssh(String),
 
+    #[error("serial error: {0}")]
+    Serial(String),
+
     #[error("authentication failed for user {0}")]
     AuthFailed(String),
 

@@ -5,6 +5,7 @@ import { useAppStore } from "../store";
 export function RunToolbar() {
   const {
     selectedDeviceId,
+    devices,
     workspaceDir,
     workspaceFiles,
     openFile,
@@ -20,6 +21,8 @@ export function RunToolbar() {
   const [consoleMode, setConsoleMode] = useState<"pty" | "pipe">("pty");
   const [timeoutSecs, setTimeoutSecs] = useState(0);
   const [busy, setBusy] = useState(false);
+  const isSerial = devices.find((device) => device.id === selectedDeviceId)?.transport === "serial";
+  const effectiveConsoleMode = isSerial ? "pty" : consoleMode;
 
   const activeRun = activeRunId ? runs[activeRunId] : null;
   const running =
@@ -46,7 +49,7 @@ export function RunToolbar() {
           workspace_dir: workspaceDir,
           kind: "command",
           command: command.trim(),
-          console_mode: consoleMode,
+          console_mode: effectiveConsoleMode,
           timeout_secs: timeoutSecs,
         };
       } else {
@@ -65,7 +68,7 @@ export function RunToolbar() {
           kind,
           entry: effectiveEntry,
           args,
-          console_mode: consoleMode,
+          console_mode: effectiveConsoleMode,
           timeout_secs: timeoutSecs,
         };
       }
@@ -123,12 +126,13 @@ export function RunToolbar() {
       )}
 
       <select
-        value={consoleMode}
-        title="console 模式：pty 支持交互/TUI；pipe 分离 stdout/stderr"
+        value={effectiveConsoleMode}
+        disabled={isSerial}
+        title={isSerial ? "串口：合并输出，仅启动时设置行列数" : "console 模式：pty 支持交互/TUI；pipe 分离 stdout/stderr"}
         onChange={(e) => setConsoleMode(e.target.value as never)}
       >
-        <option value="pty">pty</option>
-        <option value="pipe">pipe</option>
+        <option value="pty">{isSerial ? "串口 Console" : "pty"}</option>
+        {!isSerial && <option value="pipe">pipe</option>}
       </select>
 
       <input

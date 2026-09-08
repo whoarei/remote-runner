@@ -2,7 +2,7 @@
 
 > 对应设计文档：`00001_20260908_embedded-linux-remote-script-runner-design.md`
 > 本文档持续更新，记录每个实施阶段完成了什么、怎么实现的、踩过的坑。
-> 2026-09-08 代码审查后的修复、验证和当前限制见 [代码审查记录](00003_20260908_code-review.md)。以下阶段 1 方法为首次实现时的记录。
+> 2026-09-08 代码审查后的修复、验证和当前限制见 [代码审查记录](00003_20260908_code-review.md)。串口 Shell V1 的实现记录见 [串口实现记录](00004_20260908_serial-shell.md)。以下阶段 1 方法为首次实现时的记录。
 
 ---
 
@@ -179,7 +179,8 @@ rr-cli stop-test      # sleep 60 中途 stop        → canceled，exit=143，�
 - [ ] command 模式下复合命令（`a; b`）stop 只能杀到包装 sh，孙进程可能残留
       （pipe 模式已由 setsid 进程组 kill 覆盖；pty 模式依赖 Ctrl+C 兜底）。
 - [ ] 首次连接偶发一次 run 不结束（仅出现 1 次未复现，疑似 TOFU 写盘时序，待观察）。
-- [ ] 串口 transport、Node.js、Python venv / Managed Runtime、Expect、增量同步（hash）均未实现。
+- [x] 串口 Shell transport V1 已实现（端口枚举、8N1、marker 协议、文本工作区上传、stdin、停止与超时）；详见 `00004`。
+- [ ] Serial Agent、Node.js、Python venv / Managed Runtime、Expect、增量同步（hash）均未实现。
 
 ### 运行方式
 

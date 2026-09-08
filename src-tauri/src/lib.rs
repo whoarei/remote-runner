@@ -1,7 +1,9 @@
 pub mod commands;
 pub mod device;
 pub mod error;
+pub mod process;
 pub mod runner;
+pub mod serial;
 pub mod ssh;
 
 use commands::AppState;
@@ -53,6 +55,7 @@ pub fn run() {
             commands::save_device,
             commands::delete_device,
             commands::test_device,
+            commands::list_serial_ports,
             commands::list_workspace,
             commands::read_workspace_file,
             commands::run_script,
