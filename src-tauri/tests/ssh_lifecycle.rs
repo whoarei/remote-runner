@@ -115,6 +115,7 @@ async fn run_case(behavior: Behavior, timeout: u64) -> (RunStatus, Vec<u8>) {
     let device = DeviceProfile {
         transport: Default::default(),
         serial: None,
+        wsl: None,
         id: "test".into(),
         name: "test".into(),
         host: "127.0.0.1".into(),

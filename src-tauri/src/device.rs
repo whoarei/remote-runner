@@ -8,6 +8,34 @@ pub enum TransportKind {
     #[default]
     Ssh,
     Serial,
+    Wsl,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WslConfig {
+    pub distribution: String,
+    /// Empty selects the distribution's default user.
+    #[serde(default)]
+    pub user: String,
+}
+
+impl WslConfig {
+    pub fn validate(&self) -> Result<()> {
+        for (name, value, required) in [
+            ("distribution", self.distribution.as_str(), true),
+            ("user", self.user.as_str(), false),
+        ] {
+            if (required && value.trim().is_empty())
+                || value.starts_with('-')
+                || value.len() > 256
+                || value.chars().any(char::is_control)
+                || value != value.trim()
+            {
+                return Err(RunnerError::InvalidInput(format!("invalid WSL {name}")));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -68,6 +96,8 @@ pub struct DeviceProfile {
     pub transport: TransportKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub serial: Option<SerialConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wsl: Option<WslConfig>,
     #[serde(default)]
     pub host: String,
     #[serde(default = "default_port")]
@@ -107,6 +137,11 @@ impl DeviceProfile {
             ));
         }
         match self.transport {
+            TransportKind::Wsl => self
+                .wsl
+                .as_ref()
+                .ok_or_else(|| invalid("WSL configuration is required"))?
+                .validate()?,
             TransportKind::Ssh => {
                 if self.host.trim().is_empty() || self.username.trim().is_empty() || self.port == 0
                 {

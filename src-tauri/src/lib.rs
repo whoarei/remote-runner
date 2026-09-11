@@ -6,6 +6,7 @@ pub mod runner;
 pub mod serial;
 pub mod ssh;
 pub mod workspace;
+pub mod wsl;
 
 use commands::AppState;
 use device::DeviceStore;
@@ -57,6 +58,7 @@ pub fn run() {
             commands::delete_device,
             commands::test_device,
             commands::list_serial_ports,
+            commands::list_wsl_distributions,
             commands::list_workspace,
             commands::read_workspace_file,
             commands::write_workspace_file,

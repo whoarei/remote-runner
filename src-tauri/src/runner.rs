@@ -178,6 +178,11 @@ impl RunManager {
     }
 
     pub fn resize(&self, run_id: &str, cols: u32, rows: u32) -> Result<()> {
+        if cols == 0 || rows == 0 || cols > 4096 || rows > 4096 {
+            return Err(RunnerError::InvalidInput(
+                "console dimensions must be between 1 and 4096".into(),
+            ));
+        }
         if self
             .handles
             .lock()
@@ -351,6 +356,9 @@ impl RunManager {
         config_dir: &std::path::Path,
         mut stop_rx: mpsc::UnboundedReceiver<StopKind>,
     ) -> Result<RunOutcome> {
+        if device.transport == TransportKind::Wsl {
+            return self.execute_wsl(run_id, req, device, stop_rx).await;
+        }
         if device.transport == TransportKind::Serial {
             return self.execute_serial(run_id, req, device, stop_rx).await;
         }
@@ -544,6 +552,75 @@ impl RunManager {
             None => RunOutcome::Exited { code: exit_code },
             Some(StopKind::User) => RunOutcome::Canceled { code: exit_code },
             Some(StopKind::Timeout) => RunOutcome::TimedOut { secs: timeout_secs },
+        })
+    }
+
+    async fn execute_wsl(
+        &self,
+        run_id: &str,
+        req: &RunRequest,
+        device: &DeviceProfile,
+        mut stop_rx: mpsc::UnboundedReceiver<StopKind>,
+    ) -> Result<RunOutcome> {
+        use crate::wsl::{self, Event, StopReason};
+        use base64::Engine;
+        if stop_rx.try_recv().is_ok() {
+            return Ok(RunOutcome::Canceled { code: None });
+        }
+        let files = if let Some(dir) = req.workspace_dir.clone() {
+            tokio::task::spawn_blocking(move || wsl::filesync::collect(std::path::Path::new(&dir)))
+                .await
+                .map_err(|e| RunnerError::TaskFailed(e.to_string()))??
+        } else {
+            Vec::new()
+        };
+        if stop_rx.try_recv().is_ok() {
+            return Ok(RunOutcome::Canceled { code: None });
+        }
+        let (control, mut controls) = mpsc::unbounded_channel();
+        if let Some(handle) = self.handles.lock().get_mut(run_id) {
+            handle.control = control.clone();
+        }
+        let remote = format!("{}/{}", device.workspace_root.trim_end_matches('/'), run_id);
+        let execution = wsl::execute(
+            device.wsl.as_ref().unwrap(),
+            req,
+            &remote,
+            files,
+            &mut controls,
+            |event| match event {
+                Event::State(state) => self.set_state(run_id, state),
+                Event::Output { stream, data } => {
+                    let _ = self.event_tx.send(RunEvent::Output {
+                        run_id: run_id.into(),
+                        stream: match stream {
+                            OutputStream::Stdout => "stdout",
+                            OutputStream::Stderr => "stderr",
+                        }
+                        .into(),
+                        data: base64::engine::general_purpose::STANDARD.encode(data),
+                    });
+                }
+            },
+        );
+        tokio::pin!(execution);
+        let mut stop_sent = false;
+        let result = loop {
+            tokio::select! {
+                biased;
+                _ = stop_rx.recv(), if !stop_sent => {
+                    stop_sent = true;
+                    let _ = control.send(SessionControl::Interrupt);
+                }
+                result = &mut execution => break result?,
+            }
+        };
+        Ok(match result.stopped {
+            Some(StopReason::User) => RunOutcome::Canceled { code: result.code },
+            Some(StopReason::Timeout) => RunOutcome::TimedOut {
+                secs: req.timeout_secs,
+            },
+            None => RunOutcome::Exited { code: result.code },
         })
     }
 

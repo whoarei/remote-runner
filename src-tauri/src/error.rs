@@ -11,6 +11,9 @@ pub enum RunnerError {
     #[error("serial error: {0}")]
     Serial(String),
 
+    #[error("WSL error: {0}")]
+    Wsl(String),
+
     #[error("authentication failed for user {0}")]
     AuthFailed(String),
 

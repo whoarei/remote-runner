@@ -121,7 +121,7 @@ fn upload_dir_inner<'a>(
 }
 
 /// 判断是否为文本脚本（需要 CRLF→LF 规范化）
-fn is_text_script(name: &str) -> bool {
+pub(crate) fn is_text_script(name: &str) -> bool {
     let lower = name.to_lowercase();
     if !lower.contains('.') {
         return true;
@@ -146,7 +146,7 @@ fn is_text_script(name: &str) -> bool {
     }
 }
 
-fn normalize_lf(data: Vec<u8>) -> Vec<u8> {
+pub(crate) fn normalize_lf(data: Vec<u8>) -> Vec<u8> {
     // Extensionless executables and binary assets must remain byte-for-byte intact.
     if data.contains(&0) || std::str::from_utf8(&data).is_err() {
         return data;

@@ -8,6 +8,7 @@ The supported transports are:
 
 - **SSH**: SFTP workspace upload, PTY or pipe execution, interactive input, resize, stop escalation, and run history.
 - **Serial Shell V1**: `tokio-serial`, 8N1, shell marker framing, UTF-8 text workspace upload, stdin, Ctrl+C, and timeout handling. It assumes the device is already logged into a Linux shell; it does not automate login credentials.
+- **WSL**: Windows `wsl.exe` directly starts a bundled Python helper in a selected local distribution, without SSH. Supports binary workspace snapshots, Linux PTY or separate pipes, stdin, resize, process-group stop escalation, and history. Requires Python 3.8+ inside the distribution.
 
 There is no hardware available in the development environment. Serial behavior is verified with Tokio duplex streams and a local POSIX/Git Bash shell.
 
@@ -17,6 +18,7 @@ There is no hardware available in the development environment. Serial behavior i
 - `src-tauri/src/runner.rs`: request validation, run lifecycle, status/history, and transport dispatch.
 - `src-tauri/src/ssh/`: SSH client, SFTP synchronization, and SSH process sessions.
 - `src-tauri/src/serial/`: serial port leasing, shell framing, session control, and text workspace upload.
+- `src-tauri/src/wsl/`: direct WSL process bridge, bounded workspace snapshots, Python helper, and opt-in WSL integration tests.
 - `src-tauri/src/process.rs`: transport-independent console and session control types.
 - `docs/`: design, implementation progress, review notes, and serial-shell behavior.
 - `scripts/test.mjs`: frontend tests.
@@ -49,6 +51,7 @@ The `rr-cli` binary is an SSH-only smoke-test tool. It is useful only when an ac
 
 ## Implementation rules
 
+- Do not use Computer Use for this project. Verify changes with code inspection, automated tests, and command-line tools.
 - Validate all device and run input at the Rust boundary. Do not rely on frontend validation for safety or path containment.
 - Preserve raw output bytes through the backend event boundary. Output events are base64 encoded before reaching the frontend.
 - Keep SSH and serial control semantics aligned at the `RunManager` level, while keeping transport-specific protocol code in its own module.
@@ -57,6 +60,7 @@ The `rr-cli` binary is an SSH-only smoke-test tool. It is useful only when an ac
 - A serial port is leased before opening and must be released on every success and failure path. Serial uses one combined output stream and cannot resize after launch.
 - Do not add tests that require a physical serial device. Extend the duplex-stream simulator and local-shell smoke tests instead.
 - Keep documentation in `docs/` synchronized when transport behavior, limits, or unsupported capabilities change.
+- WSL must use structured process arguments and a separate control protocol; never interpolate distribution names, users, file contents, or paths into shell commands. Only an explicit helper exit message confirms completion; EOF is a failure. Do not terminate a whole WSL distribution to stop a run.
 
 ## Change verification
 

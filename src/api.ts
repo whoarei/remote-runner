@@ -8,8 +8,9 @@ export type AuthMethod =
 export interface DeviceProfile {
   id: string;
   name: string;
-  transport: "ssh" | "serial";
+  transport: "ssh" | "serial" | "wsl";
   serial?: { port: string; baud_rate: number } | null;
+  wsl?: { distribution: string; user: string } | null;
   host: string;
   port: number;
   username: string;
@@ -83,6 +84,7 @@ export const api = {
   testDevice: (device: DeviceProfile) =>
     invoke<string>("test_device", { device }),
   listSerialPorts: () => invoke<string[]>("list_serial_ports"),
+  listWslDistributions: () => invoke<string[]>("list_wsl_distributions"),
 
   listWorkspace: (dir: string) =>
     invoke<WorkspaceEntry[]>("list_workspace", { dir }),

@@ -67,6 +67,7 @@ async fn main() {
         let device = DeviceProfile {
             transport: Default::default(),
             serial: None,
+            wsl: None,
             id: "cli-device".to_string(),
             name: format!("{user}@{host}"),
             host: host.clone(),
@@ -206,6 +207,7 @@ async fn main() {
     let device = DeviceProfile {
         transport: Default::default(),
         serial: None,
+        wsl: None,
         id: "cli-device".to_string(),
         name: format!("{user}@{host}"),
         host,

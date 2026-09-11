@@ -36,13 +36,16 @@ pub fn delete_device(state: tauri::State<'_, AppState>, id: String) -> Result<()
     state.device_store.delete(&id)
 }
 
-/// 连接测试：建立 SSH 连接并执行 uname
+/// Test the selected transport without starting a user workload.
 #[tauri::command]
 pub async fn test_device(
     state: tauri::State<'_, AppState>,
     device: DeviceProfile,
 ) -> Result<String> {
     device.validate()?;
+    if device.transport == crate::device::TransportKind::Wsl {
+        return crate::wsl::test_device(device.wsl.as_ref().unwrap()).await;
+    }
     if device.transport == crate::device::TransportKind::Serial {
         return crate::serial::test_device(&device).await;
     }
@@ -76,6 +79,11 @@ pub async fn test_device(
 #[tauri::command]
 pub fn list_serial_ports() -> Result<Vec<String>> {
     crate::serial::transport::available_ports()
+}
+
+#[tauri::command]
+pub async fn list_wsl_distributions() -> Result<Vec<String>> {
+    crate::wsl::list_distributions().await
 }
 
 #[tauri::command]

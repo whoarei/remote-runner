@@ -7,6 +7,7 @@ const emptyDevice = (): DeviceProfile => ({
   name: "",
   transport: "ssh",
   serial: { port: "", baud_rate: 115200 },
+  wsl: { distribution: "", user: "" },
   host: "",
   port: 22,
   username: "root",
@@ -19,11 +20,17 @@ export function DeviceBar() {
   const [editing, setEditing] = useState<DeviceProfile | null>(null);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [ports, setPorts] = useState<string[]>([]);
+  const [distributions, setDistributions] = useState<string[]>([]);
   const [testing, setTesting] = useState(false);
 
   const refreshPorts = async () => {
     try { setPorts(await api.listSerialPorts()); }
     catch (e) { setTestResult(`串口枚举失败: ${e}`); }
+  };
+
+  const refreshDistributions = async () => {
+    try { setDistributions(await api.listWslDistributions()); }
+    catch (e) { setTestResult(`WSL 发行版枚举失败: ${e}`); }
   };
 
   const save = async (d: DeviceProfile) => {
@@ -61,7 +68,7 @@ export function DeviceBar() {
         {devices.length === 0 && <option value="">（无设备，请先添加）</option>}
         {devices.map((d) => (
           <option key={d.id} value={d.id}>
-            {d.name} ({d.transport === "serial" ? `${d.serial?.port} · ${d.serial?.baud_rate}` : `${d.username}@${d.host}`})
+            {d.name} ({d.transport === "wsl" ? `WSL · ${d.wsl?.distribution}` : d.transport === "serial" ? `${d.serial?.port} · ${d.serial?.baud_rate}` : `${d.username}@${d.host}`})
           </option>
         ))}
       </select>
@@ -70,7 +77,7 @@ export function DeviceBar() {
         <button
           onClick={() => {
             const d = devices.find((x) => x.id === selectedDeviceId);
-            if (d) { setTestResult(null); setEditing({ ...d }); }
+            if (d) { setTestResult(null); setEditing({ ...d }); if (d.transport === "wsl") void refreshDistributions(); }
           }}
         >
           编辑
@@ -92,15 +99,31 @@ export function DeviceBar() {
               连接方式
               <select value={editing.transport} disabled={testing} onChange={(e) => {
                 const transport = e.target.value as DeviceProfile["transport"];
-                setEditing({ ...editing, transport, serial: editing.serial ?? { port: "", baud_rate: 115200 } });
+                setEditing({ ...editing, transport, serial: editing.serial ?? { port: "", baud_rate: 115200 }, wsl: editing.wsl ?? { distribution: "", user: "" } });
                 setTestResult(null);
                 if (transport === "serial") void refreshPorts();
+                if (transport === "wsl") void refreshDistributions();
               }}>
                 <option value="ssh">SSH</option>
                 <option value="serial">串口</option>
+                <option value="wsl">WSL（本机发行版）</option>
               </select>
             </label>
-            {editing.transport === "serial" ? <>
+            {editing.transport === "wsl" ? <>
+              <label>
+                WSL 发行版
+                <input list="wsl-distributions" value={editing.wsl?.distribution ?? ""} placeholder="例如 Ubuntu-24.04"
+                  onChange={(e) => setEditing({ ...editing, wsl: { distribution: e.target.value, user: editing.wsl?.user ?? "" } })} />
+                <datalist id="wsl-distributions">{distributions.map((name) => <option key={name} value={name} />)}</datalist>
+                <button type="button" onClick={refreshDistributions}>刷新发行版</button>
+              </label>
+              <label>
+                Linux 用户（留空使用发行版默认用户）
+                <input value={editing.wsl?.user ?? ""} placeholder="默认用户"
+                  onChange={(e) => setEditing({ ...editing, wsl: { distribution: editing.wsl?.distribution ?? "", user: e.target.value } })} />
+              </label>
+              <p>直接在本机 WSL 中运行，无需 SSH。发行版需有 python3，运行 Shell 脚本还需 bash；支持 PTY 交互及 pipe 输出。工作区每次复制到 WSL，单文件上限 16 MiB，总计 64 MiB。</p>
+            </> : editing.transport === "serial" ? <>
               <label>
                 串口
                 <input list="serial-ports" value={editing.serial?.port ?? ""} placeholder="COM8 或 /dev/ttyUSB0"
@@ -193,7 +216,7 @@ export function DeviceBar() {
             )}
             </>}
             <label>
-              远程工作区根目录
+              {editing.transport === "wsl" ? "WSL 工作区根目录" : "远程工作区根目录"}
               <input
                 value={editing.workspace_root}
                 onChange={(e) =>
@@ -210,7 +233,7 @@ export function DeviceBar() {
               )}
               <button
                 className="primary"
-                disabled={testing || !editing.name || (editing.transport === "serial" ? !editing.serial?.port || !editing.serial?.baud_rate : !editing.host)}
+                disabled={testing || !editing.name || (editing.transport === "wsl" ? !editing.wsl?.distribution.trim() : editing.transport === "serial" ? !editing.serial?.port || !editing.serial?.baud_rate : !editing.host)}
                 onClick={() => save(editing)}
               >
                 保存
