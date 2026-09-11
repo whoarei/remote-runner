@@ -1,12 +1,14 @@
 import { create } from "zustand";
 import { api, DeviceProfile, RunEvent, RunStatus, WorkspaceEntry } from "./api";
 import { appendOutput, OutputBuffer } from "./outputBuffer";
+import { loadWorkspaceHistory, rememberWorkspace, saveWorkspaceHistory } from "./workspaceHistory";
 
 interface AppState {
   devices: DeviceProfile[];
   selectedDeviceId: string | null;
 
   workspaceDir: string | null;
+  recentWorkspaces: string[];
   workspaceFiles: WorkspaceEntry[];
   openFile: string | null;
   fileContent: string;
@@ -36,6 +38,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedDeviceId: null,
 
   workspaceDir: null,
+  recentWorkspaces: loadWorkspaceHistory(),
   workspaceFiles: [],
   openFile: null,
   fileContent: "",
@@ -67,7 +70,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       return;
     }
     const files = await api.listWorkspace(dir);
-    set({ workspaceDir: dir, workspaceFiles: files, openFile: null, fileContent: "" });
+    const recentWorkspaces = rememberWorkspace(get().recentWorkspaces, dir);
+    saveWorkspaceHistory(recentWorkspaces);
+    set({ workspaceDir: dir, workspaceFiles: files, recentWorkspaces, openFile: null, fileContent: "" });
   },
 
   openWorkspaceFile: async (name) => {

@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { appendOutput, MAX_OUTPUT_BYTES } from "../src/outputBuffer";
 import { useAppStore } from "../src/store";
+import { api } from "../src/api";
+import { loadWorkspaceHistory } from "../src/workspaceHistory";
 
 test("output buffers stay bounded and retain an absolute replay position", () => {
   const first = appendOutput(undefined, new Uint8Array(MAX_OUTPUT_BYTES));
@@ -33,4 +35,53 @@ test("terminal events update history synchronously and without duplicates", () =
   useAppStore.getState().handleRunEvent({ type: "status", status });
   assert.equal(useAppStore.getState().history.filter((h) => h.run_id === status.run_id).length, 1);
   assert.equal(useAppStore.getState().runs.finished.exit_code, 0);
+});
+
+test("recent workspaces persist successful opens, reorder repeats, and survive failed opens", async (t) => {
+  const originalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const originalState = useAppStore.getState();
+  let stored: string | null = null;
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: { getItem: () => stored, setItem: (_key: string, value: string) => { stored = value; } },
+  });
+  t.after(() => {
+    if (originalStorage) Object.defineProperty(globalThis, "localStorage", originalStorage);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+    useAppStore.setState(originalState, true);
+  });
+  t.mock.method(api, "listWorkspace", async (dir: string) => {
+    if (dir === "/missing") throw new Error("Directory no longer exists");
+    return [{ name: "main.py", is_dir: false }];
+  });
+  useAppStore.setState({ recentWorkspaces: [] });
+  const { setWorkspaceDir } = useAppStore.getState();
+  for (let i = 0; i < 12; i++) await setWorkspaceDir(`/workspace/${i}`);
+  await setWorkspaceDir("/workspace/5");
+  const recent = useAppStore.getState().recentWorkspaces;
+  assert.equal(recent.length, 10);
+  assert.equal(recent[0], "/workspace/5");
+  assert.equal(new Set(recent).size, 10);
+  assert.ok(!recent.includes("/workspace/0"));
+  assert.deepEqual(loadWorkspaceHistory(), recent);
+
+  useAppStore.setState({ openFile: "main.py", fileContent: "print('hello')" });
+  const beforeFailure = useAppStore.getState();
+  await assert.rejects(setWorkspaceDir("/missing"), /Directory no longer exists/);
+  assert.equal(useAppStore.getState(), beforeFailure);
+  assert.deepEqual(loadWorkspaceHistory(), recent);
+
+  stored = "invalid JSON";
+  assert.deepEqual(loadWorkspaceHistory(), []);
+  stored = JSON.stringify([null, 7, "", "  ", "/valid", "/valid"]);
+  assert.deepEqual(loadWorkspaceHistory(), ["/valid"]);
+
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    get: () => { throw new Error("Storage unavailable"); },
+  });
+  t.mock.method(console, "warn", () => {});
+  assert.deepEqual(loadWorkspaceHistory(), []);
+  await setWorkspaceDir("/still-works");
+  assert.equal(useAppStore.getState().workspaceDir, "/still-works");
 });
