@@ -54,6 +54,27 @@ export interface WorkspaceEntry {
   is_dir: boolean;
 }
 
+export interface WorkspaceDocument {
+  content: string;
+  revision: string;
+  eol: "lf" | "crlf";
+  bom: boolean;
+}
+
+export interface SaveWorkspaceRequest {
+  dir: string;
+  name: string;
+  content: string;
+  expectedRevision: string;
+  eol: "lf" | "crlf";
+  bom: boolean;
+}
+
+export function errorMessage(error: unknown): string {
+  if (typeof error === "object" && error !== null && "message" in error) return String(error.message);
+  return String(error);
+}
+
 export const api = {
   listDevices: () => invoke<DeviceProfile[]>("list_devices"),
   saveDevice: (device: DeviceProfile) =>
@@ -66,7 +87,9 @@ export const api = {
   listWorkspace: (dir: string) =>
     invoke<WorkspaceEntry[]>("list_workspace", { dir }),
   readWorkspaceFile: (dir: string, name: string) =>
-    invoke<string>("read_workspace_file", { dir, name }),
+    invoke<WorkspaceDocument>("read_workspace_file", { dir, name }),
+  writeWorkspaceFile: (request: SaveWorkspaceRequest) =>
+    invoke<{ revision: string }>("write_workspace_file", { request }),
 
   runScript: (request: RunRequest) => invoke<string>("run_script", { request }),
   stopRun: (runId: string) => invoke<void>("stop_run", { runId }),

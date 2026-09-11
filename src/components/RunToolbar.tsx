@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, inferKind, RunRequest, ScriptKind } from "../api";
 import { useAppStore } from "../store";
+import { dirtyDocument } from "../editorDocument";
 
 export function RunToolbar() {
   const {
@@ -11,7 +12,6 @@ export function RunToolbar() {
     openFile,
     activeRunId,
     runs,
-    setActiveRun,
   } = useAppStore();
 
   const [mode, setMode] = useState<"script" | "command">("script");
@@ -21,6 +21,8 @@ export function RunToolbar() {
   const [consoleMode, setConsoleMode] = useState<"pty" | "pipe">("pty");
   const [timeoutSecs, setTimeoutSecs] = useState(0);
   const [busy, setBusy] = useState(false);
+  const dirty = useAppStore(dirtyDocument);
+  const editorBusy = useAppStore((s) => s.loading || s.saving || s.starting || s.guarding);
   const isSerial = devices.find((device) => device.id === selectedDeviceId)?.transport === "serial";
   const effectiveConsoleMode = isSerial ? "pty" : consoleMode;
 
@@ -72,8 +74,7 @@ export function RunToolbar() {
           timeout_secs: timeoutSecs,
         };
       }
-      const runId = await api.runScript({ ...request, ...useAppStore.getState().consoleSize });
-      setActiveRun(runId);
+      await useAppStore.getState().startRun(request);
     } catch (e) {
       alert(`启动失败: ${e}`);
     } finally {
@@ -149,8 +150,8 @@ export function RunToolbar() {
           ■ Stop
         </button>
       ) : (
-        <button className="primary" disabled={busy || !selectedDeviceId} onClick={run}>
-          ▶ Run
+        <button className="primary" disabled={busy || editorBusy || !selectedDeviceId} onClick={run}>
+          {dirty ? "▶ 保存并运行" : "▶ Run"}
         </button>
       )}
 

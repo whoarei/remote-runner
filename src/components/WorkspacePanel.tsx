@@ -12,6 +12,9 @@ export function WorkspacePanel() {
     openFile,
     setWorkspaceDir,
     openWorkspaceFile,
+    saving,
+    starting,
+    guarding,
   } = useAppStore();
 
   const [busy, setBusy] = useState(false);
@@ -43,7 +46,7 @@ export function WorkspacePanel() {
         <select
           aria-label="选择工作区目录"
           value=""
-          disabled={busy}
+          disabled={busy || saving || starting || guarding}
           onChange={(event) => {
             const value = event.target.value;
             if (value) void choose(value === NEW_WORKSPACE ? undefined : value);
@@ -61,10 +64,9 @@ export function WorkspacePanel() {
           <li
             key={f.name}
             className={f.name === openFile ? "active" : ""}
-            onClick={() => !f.is_dir && openWorkspaceFile(f.name)}
           >
-            {f.is_dir ? "📁 " : "📄 "}
-            {f.name}
+            {f.is_dir ? <>📁 {f.name}</> : <button disabled={busy || saving || starting || guarding}
+              onClick={() => void openWorkspaceFile(f.name)}>📄 {f.name}</button>}
           </li>
         ))}
       </ul>

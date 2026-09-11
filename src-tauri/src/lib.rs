@@ -5,6 +5,7 @@ pub mod process;
 pub mod runner;
 pub mod serial;
 pub mod ssh;
+pub mod workspace;
 
 use commands::AppState;
 use device::DeviceStore;
@@ -58,6 +59,7 @@ pub fn run() {
             commands::list_serial_ports,
             commands::list_workspace,
             commands::read_workspace_file,
+            commands::write_workspace_file,
             commands::run_script,
             commands::stop_run,
             commands::send_run_input,

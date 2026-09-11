@@ -97,17 +97,34 @@ pub fn list_workspace(dir: String) -> Result<Vec<WorkspaceEntry>> {
 }
 
 #[tauri::command]
-pub fn read_workspace_file(dir: String, name: String) -> Result<String> {
-    let path = std::path::Path::new(&dir).join(&name);
-    // 防止路径逃逸
-    let canonical_dir = std::fs::canonicalize(&dir)?;
-    let canonical_path = std::fs::canonicalize(&path)?;
-    if !canonical_path.starts_with(&canonical_dir) {
-        return Err(crate::error::RunnerError::InvalidInput(
-            "path escapes workspace".into(),
+pub fn read_workspace_file(
+    dir: String,
+    name: String,
+) -> std::result::Result<crate::workspace::Document, crate::workspace::FileError> {
+    let _guard = crate::workspace::FILE_OPERATIONS.lock();
+    crate::workspace::read(&dir, &name)
+}
+
+#[tauri::command]
+pub fn write_workspace_file(
+    state: tauri::State<'_, AppState>,
+    request: crate::workspace::SaveRequest,
+) -> std::result::Result<crate::workspace::Saved, crate::workspace::FileError> {
+    let _guard = crate::workspace::FILE_OPERATIONS.lock();
+    // RunStatus does not expose workspace identity. Conservatively block saves
+    // during preparation/sync of ANY desktop run, including a run being stopped.
+    if state
+        .run_manager
+        .list_running()
+        .iter()
+        .any(|run| matches!(run.state.as_str(), "preparing" | "syncing" | "stopping"))
+    {
+        return Err(crate::workspace::FileError::new(
+            "busy",
+            "任务正在准备、同步或停止，请稍后保存",
         ));
     }
-    Ok(std::fs::read_to_string(&canonical_path)?)
+    crate::workspace::write(request)
 }
 
 // ---------- 运行控制 ----------
@@ -117,6 +134,7 @@ pub fn run_script(
     state: tauri::State<'_, AppState>,
     request: crate::runner::RunRequest,
 ) -> Result<String> {
+    let _guard = crate::workspace::FILE_OPERATIONS.lock();
     let device = state.device_store.get(&request.device_id)?;
     state
         .run_manager
