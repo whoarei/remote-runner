@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { onRunEvent } from "./api";
 import { useAppStore } from "./store";
 import { DeviceBar } from "./components/DeviceBar";
@@ -7,6 +7,7 @@ import { RunToolbar } from "./components/RunToolbar";
 import { RunConsole } from "./components/RunConsole";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { UnsavedDialog } from "./components/UnsavedDialog";
+import { TitleBar } from "./components/TitleBar";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@tauri-apps/api/core";
 import { dirtyDocument } from "./editorDocument";
@@ -16,6 +17,7 @@ const Editor = lazy(() => import("./components/Editor").then((module) => ({ defa
 
 export default function App() {
   const { loadDevices, handleRunEvent } = useAppStore();
+  const [closeReady, setCloseReady] = useState(false);
 
   useEffect(() => {
     void loadDevices();
@@ -31,6 +33,7 @@ export default function App() {
     };
     window.addEventListener("beforeunload", beforeUnload);
     let closing = false;
+    let disposed = false;
     const unlisten = isTauri() ? getCurrentWindow().onCloseRequested(async (event) => {
       event.preventDefault();
       if (closing) return;
@@ -42,13 +45,15 @@ export default function App() {
       } catch (error) { useAppStore.setState({ editorError: errorMessage(error) }); }
       finally { closing = false; }
     }) : Promise.resolve(() => {});
+    void unlisten.then(() => { if (!disposed) setCloseReady(true); }).catch(() => {});
     void unlisten.catch((error) => useAppStore.setState({ editorError: `关闭保护注册失败：${errorMessage(error)}` }));
-    return () => { window.removeEventListener("beforeunload", beforeUnload); void unlisten.then((fn) => fn()).catch(() => {}); };
+    return () => { disposed = true; window.removeEventListener("beforeunload", beforeUnload); void unlisten.then((fn) => fn()).catch(() => {}); };
   }, []);
 
   return (
     <div className="app">
       <UnsavedDialog />
+      <TitleBar closeReady={closeReady} />
       <header className="app-header">
         <DeviceBar />
       </header>

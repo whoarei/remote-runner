@@ -22,6 +22,92 @@ body,
   height: 100%;
 }
 
+/* ---------- custom title bar ---------- */
+.titlebar {
+  position: relative;
+  display: flex;
+  flex: 0 0 36px;
+  height: 36px;
+  background: #1e1f24;
+  border-bottom: 1px solid #2a2b30;
+  color: #c4c6cf;
+  font-size: 12px;
+  user-select: none;
+}
+
+.titlebar-drag {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.titlebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding-left: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.titlebar-logo { color: #8fa9e8; }
+
+.titlebar-workspace {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: calc(100% - 360px);
+  height: 100%;
+  color: #9295a2;
+}
+
+.titlebar-workspace-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.titlebar-dirty {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #c4c6cf;
+  pointer-events: none;
+}
+
+.titlebar-controls { display: flex; }
+
+.titlebar .titlebar-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  cursor: default;
+}
+
+.titlebar-button svg { pointer-events: none; }
+.titlebar .titlebar-button:hover:not(:disabled) { background: #33353e; color: #fff; }
+.titlebar .titlebar-button:active:not(:disabled) { background: #424550; }
+.titlebar .titlebar-close:hover:not(:disabled) { background: #c42b1c; color: #fff; }
+.titlebar .titlebar-close:active:not(:disabled) { background: #a92316; }
+.titlebar-button:focus-visible { outline: 2px solid #8fa9e8; outline-offset: -3px; }
+.titlebar-inactive { color: #777b89; }
+.titlebar-inactive .titlebar-logo,
+.titlebar-inactive .titlebar-workspace { opacity: 0.65; }
+
 /* ---------- header / device bar ---------- */
 .app-header {
   padding: 8px 12px;
