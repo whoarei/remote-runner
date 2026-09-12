@@ -34,7 +34,7 @@ winreg = "0.55"
 
 [package]
 name = "remote-runner"
-version = "0.5.2"
+version = "0.5.3"
 description = "Embedded Linux Remote Script Runner"
 edition = "2021"
 build = "build.rs"
