@@ -41,6 +41,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.meta.outputs.tag }}
+          # Icons are Git LFS objects; without this the bundle embeds LFS pointer files
+          # and the title bar / about dialog icons render as broken images.
+          lfs: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
