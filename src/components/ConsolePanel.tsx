@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "../store";
 import { useTerminalStore } from "../terminalStore";
 import { errorMessage } from "../api";
+import { ContextMenu, contextMenuPosition, type MenuEntry, type MenuState } from "./ContextMenu";
 import { RunToolbar } from "./RunToolbar";
 import { RunConsole } from "./RunConsole";
 import { TerminalPage } from "./TerminalPage";
@@ -11,25 +12,35 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
 }) {
   const { tabs, activeTab, select, shuttingDown } = useTerminalStore();
   const devices = useAppStore((s) => s.devices);
-  const selected = useAppStore((s) => s.selectedDeviceId);
   const updating = useAppStore((s) => s.updating);
-  const [choosing, setChoosing] = useState(false);
-  const [deviceId, setDeviceId] = useState("");
+  const [menu, setMenu] = useState<MenuState | null>(null);
   const [error, setError] = useState("");
-  const picker = useRef<HTMLSelectElement>(null);
+  const addButton = useRef<HTMLButtonElement>(null);
   const activeRunId = useAppStore((s) => s.activeRunId);
   const previousRun = useRef(activeRunId);
   useEffect(() => {
     if (activeRunId !== previousRun.current) { select("run"); previousRun.current = activeRunId; }
   }, [activeRunId, select]);
-  useEffect(() => { if (choosing) picker.current?.focus(); }, [choosing]);
 
-  const open = () => {
+  const open = (deviceId: string) => {
     const device = devices.find((d) => d.id === deviceId);
     if (!device || device.transport === "serial") return;
-    setChoosing(false); setError("");
+    setError("");
     if (collapsed) onToggleCollapse();
     void useTerminalStore.getState().open(device.id, device.name).catch((e) => setError(errorMessage(e)));
+  };
+  const toggleMenu = () => {
+    if (menu) { setMenu(null); return; }
+    setError("");
+    const entries: MenuEntry[] = devices.length
+      ? devices.map((device) => ({
+        label: `${device.name} · ${device.transport.toUpperCase()}${device.transport === "serial" ? "（暂不支持终端）" : ""}`,
+        disabled: device.transport === "serial",
+        onSelect: () => open(device.id),
+      }))
+      : [{ label: "暂无可用设备", disabled: true, onSelect: () => undefined }];
+    const rect = addButton.current?.getBoundingClientRect();
+    setMenu({ ...contextMenuPosition(rect?.left ?? 0, (rect?.bottom ?? 0) + 4, entries.length), entries });
   };
   const contentVisible = visible && !collapsed;
   return <div className="console-panel">
@@ -54,20 +65,9 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
           <button className="terminal-tab-close" disabled={tab.busy} aria-label={`关闭终端 ${tab.deviceName} ${index + 1}`} onClick={() => void useTerminalStore.getState().close(tab.id)}>×</button>
         </div>)}
       </div>
-      <button className="terminal-add" aria-label="新建终端" aria-expanded={choosing} disabled={updating || shuttingDown || tabs.length >= 8} onClick={() => {
-        const available = devices.filter((d) => d.transport !== "serial");
-        setDeviceId(available.find((d) => d.id === selected)?.id ?? available[0]?.id ?? "");
-        setChoosing(!choosing); setError("");
-      }}>＋</button>
+      <button className="terminal-add" ref={addButton} aria-label="新建终端" aria-haspopup="menu" aria-expanded={!!menu} disabled={updating || shuttingDown || tabs.length >= 8} onClick={toggleMenu}>＋</button>
     </div>
-    {choosing && <div className="terminal-picker">
-      <label>连接设备 <select ref={picker} aria-label="终端设备" value={deviceId} onChange={(e) => setDeviceId(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") setChoosing(false); }}>
-        <option value="">选择 SSH / WSL 设备…</option>
-        {devices.map((device) => <option key={device.id} value={device.id} disabled={device.transport === "serial"}>{device.name} · {device.transport.toUpperCase()}{device.transport === "serial" ? "（暂不支持终端）" : ""}</option>)}
-      </select></label>
-      <button className="primary" disabled={!deviceId || updating || shuttingDown} onClick={open}>打开终端</button>
-      <button onClick={() => setChoosing(false)}>取消</button>
-    </div>}
+    <ContextMenu menu={menu} onClose={() => setMenu(null)} />
     {error && <div className="terminal-error" role="alert">{error}</div>}
     <section className="run-page" role="tabpanel" id="panel-run" aria-labelledby="tab-run" hidden={!contentVisible || activeTab !== "run"}>
       <RunToolbar />
