@@ -211,6 +211,8 @@ body,
 .titlebar-button svg { pointer-events: none; }
 .titlebar .titlebar-button:hover:not(:disabled) { background: #33353e; color: #fff; }
 .titlebar .titlebar-button:active:not(:disabled) { background: #424550; }
+.titlebar .titlebar-button.active { color: #7aa5f8; }
+.titlebar .titlebar-button.active:hover:not(:disabled) { color: #a8c3fb; }
 .titlebar .titlebar-close:hover:not(:disabled) { background: #c42b1c; color: #fff; }
 .titlebar .titlebar-close:active:not(:disabled) { background: #a92316; }
 .titlebar-button:focus-visible { outline: 2px solid #8fa9e8; outline-offset: -3px; }

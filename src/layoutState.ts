@@ -21,6 +21,8 @@ export interface LayoutState {
   /** 侧栏宽度 px */
   sidebarWidth: number;
   sidebarPosition: "left" | "right";
+  /** 侧栏整体显隐：隐藏时保留各面板自身的显隐设置，恢复时原样展示 */
+  sidebarVisible: boolean;
   /** Workspace 面板占侧栏高度的比例（剩余部分归 History） */
   sideSplit: number;
   /** 控制台区（工具栏 + 终端）高度 px */
@@ -37,6 +39,7 @@ export const DEFAULT_LAYOUT: LayoutState = {
   editorCollapsed: false,
   sidebarWidth: 260,
   sidebarPosition: "left",
+  sidebarVisible: true,
   sideSplit: 0.6,
   consoleHeight: 320,
 };
@@ -63,6 +66,19 @@ export function clampSideSplit(value: number): number {
   return clampNumber(value, SIDE_SPLIT_MIN, SIDE_SPLIT_MAX, DEFAULT_LAYOUT.sideSplit);
 }
 
+/**
+ * 侧栏整体显隐/换侧的切换逻辑（对应标题栏的左/右侧栏图标）：
+ * - 侧栏显示在同侧 → 隐藏（保留各面板显隐设置）
+ * - 侧栏显示在对侧 → 移到本侧
+ * - 侧栏隐藏 → 在本侧显示
+ */
+export function toggleSidePanel(layout: LayoutState, side: "left" | "right"): Partial<LayoutState> {
+  if (layout.sidebarVisible && layout.sidebarPosition === side) {
+    return { sidebarVisible: false };
+  }
+  return { sidebarVisible: true, sidebarPosition: side };
+}
+
 /** 任意输入（坏 JSON、缺字段、越界值）逐字段回落默认值并约束到合法范围。 */
 export function normalizeLayout(value: unknown): LayoutState {
   const source = typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
@@ -76,6 +92,7 @@ export function normalizeLayout(value: unknown): LayoutState {
     editorCollapsed: clampBoolean(source.editorCollapsed, DEFAULT_LAYOUT.editorCollapsed),
     sidebarWidth: clampSidebarWidth(source.sidebarWidth as number),
     sidebarPosition: source.sidebarPosition === "right" ? "right" : "left",
+    sidebarVisible: clampBoolean(source.sidebarVisible, DEFAULT_LAYOUT.sidebarVisible),
     sideSplit: clampSideSplit(source.sideSplit as number),
     consoleHeight: clampConsoleHeight(source.consoleHeight as number),
   };

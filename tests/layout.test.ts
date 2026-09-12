@@ -12,6 +12,7 @@ import {
   clampConsoleHeight,
   clampSideSplit,
   normalizeLayout,
+  toggleSidePanel,
   loadLayout,
   saveLayout,
 } from "../src/layoutState";
@@ -82,6 +83,27 @@ test("clamp helpers bound values and fall back on non-finite input", () => {
   assert.equal(clampSideSplit(SIDE_SPLIT_MIN - 0.1), SIDE_SPLIT_MIN);
   assert.equal(clampSideSplit(SIDE_SPLIT_MAX + 0.1), SIDE_SPLIT_MAX);
   assert.equal(clampSideSplit(NaN), DEFAULT_LAYOUT.sideSplit);
+});
+
+test("normalizeLayout falls back sidebarVisible to default on missing/invalid input", () => {
+  assert.equal(normalizeLayout({}).sidebarVisible, DEFAULT_LAYOUT.sidebarVisible);
+  assert.equal(normalizeLayout({ sidebarVisible: "yes" }).sidebarVisible, DEFAULT_LAYOUT.sidebarVisible);
+  assert.equal(normalizeLayout({ sidebarVisible: false }).sidebarVisible, false);
+});
+
+test("toggleSidePanel hides, moves, and shows the sidebar", () => {
+  const shownLeft = { ...DEFAULT_LAYOUT, sidebarVisible: true, sidebarPosition: "left" as const };
+  // 同侧 → 隐藏，位置保留
+  assert.deepEqual(toggleSidePanel(shownLeft, "left"), { sidebarVisible: false });
+  // 对侧 → 移到右侧
+  assert.deepEqual(toggleSidePanel(shownLeft, "right"), { sidebarVisible: true, sidebarPosition: "right" });
+  // 右侧再按 → 隐藏
+  const shownRight = { ...shownLeft, sidebarPosition: "right" as const };
+  assert.deepEqual(toggleSidePanel(shownRight, "right"), { sidebarVisible: false });
+  // 隐藏 → 在指定侧显示
+  const hidden = { ...shownLeft, sidebarVisible: false };
+  assert.deepEqual(toggleSidePanel(hidden, "left"), { sidebarVisible: true, sidebarPosition: "left" });
+  assert.deepEqual(toggleSidePanel(hidden, "right"), { sidebarVisible: true, sidebarPosition: "right" });
 });
 
 test("loadLayout/saveLayout round-trip and survive corrupted storage", (t) => {

@@ -72,7 +72,7 @@ export default function App() {
   const layout = useAppStore((state) => state.layout);
   const setLayout = useAppStore((state) => state.setLayout);
   const sideRef = useRef<HTMLElement>(null);
-  const sidebarVisible = layout.workspaceVisible || layout.historyVisible;
+  const sidebarVisible = layout.sidebarVisible && (layout.workspaceVisible || layout.historyVisible);
   const bothSidePanels = layout.workspaceVisible && layout.historyVisible;
   const bothExpanded = bothSidePanels && !layout.workspaceCollapsed && !layout.historyCollapsed;
 

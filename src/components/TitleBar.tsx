@@ -3,6 +3,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { errorMessage } from "../api";
 import { anyDirty } from "../editorDocument";
+import { toggleSidePanel } from "../layoutState";
 import { useAppStore } from "../store";
 import { startOneClickUpdate } from "../updateFlow";
 import { updateButtonLabel, type UpdateButtonPhase } from "../updateStatus";
@@ -16,6 +17,8 @@ function reportWindowError(error: unknown) {
 export function TitleBar({ closeReady, onAbout, onCheckUpdate }: { closeReady: boolean; onAbout: () => void; onCheckUpdate: () => void }) {
   const workspaceDir = useAppStore((state) => state.workspaceDir);
   const availableUpdate = useAppStore((state) => state.availableUpdate);
+  const layout = useAppStore((state) => state.layout);
+  const setLayout = useAppStore((state) => state.setLayout);
   const dirty = useAppStore(anyDirty);
   const [maximized, setMaximized] = useState(false);
   const [focused, setFocused] = useState(true);
@@ -75,6 +78,45 @@ export function TitleBar({ closeReady, onAbout, onCheckUpdate }: { closeReady: b
             {updateButtonLabel(updatePhase)}
           </button>
         )}
+        <button
+          type="button"
+          className={`titlebar-button${layout.sidebarVisible && layout.sidebarPosition === "left" ? " active" : ""}`}
+          aria-label="切换左侧栏"
+          aria-pressed={layout.sidebarVisible && layout.sidebarPosition === "left"}
+          title="切换左侧栏"
+          onClick={() => setLayout(toggleSidePanel(layout, "left"))}
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <rect x="1" y="1.5" width="10" height="9" rx="1.5" stroke="currentColor" />
+            <rect x="2.2" y="2.7" width="2.6" height="6.6" rx="0.6" fill="currentColor" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          className={`titlebar-button${layout.consoleVisible ? " active" : ""}`}
+          aria-label="切换控制台面板"
+          aria-pressed={layout.consoleVisible}
+          title="切换控制台面板"
+          onClick={() => setLayout({ consoleVisible: !layout.consoleVisible })}
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <rect x="1" y="1.5" width="10" height="9" rx="1.5" stroke="currentColor" />
+            <rect x="2.2" y="7" width="7.6" height="2.3" rx="0.6" fill="currentColor" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          className={`titlebar-button${layout.sidebarVisible && layout.sidebarPosition === "right" ? " active" : ""}`}
+          aria-label="切换右侧栏"
+          aria-pressed={layout.sidebarVisible && layout.sidebarPosition === "right"}
+          title="切换右侧栏"
+          onClick={() => setLayout(toggleSidePanel(layout, "right"))}
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <rect x="1" y="1.5" width="10" height="9" rx="1.5" stroke="currentColor" />
+            <rect x="7.2" y="2.7" width="2.6" height="6.6" rx="0.6" fill="currentColor" />
+          </svg>
+        </button>
         <button type="button" className="titlebar-button" aria-label="最小化" title="最小化" disabled={!desktop} onClick={() => windowAction("minimize")}>
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M1 6.5h10" stroke="currentColor" /></svg>
         </button>

@@ -158,8 +158,9 @@ export function MenuBar({ onAbout, onCheckUpdate }: { onAbout: () => void; onChe
     {
       label: "视图",
       entries: [
-        { type: "checkbox", label: "工作区面板", checked: layout.workspaceVisible, onSelect: () => setLayout({ workspaceVisible: !layout.workspaceVisible }) },
-        { type: "checkbox", label: "历史面板", checked: layout.historyVisible, onSelect: () => setLayout({ historyVisible: !layout.historyVisible }) },
+        { type: "checkbox", label: "侧栏", checked: layout.sidebarVisible, onSelect: () => setLayout({ sidebarVisible: !layout.sidebarVisible }) },
+        { type: "checkbox", label: "工作区面板", checked: layout.workspaceVisible, onSelect: () => setLayout({ workspaceVisible: !layout.workspaceVisible, sidebarVisible: true }) },
+        { type: "checkbox", label: "历史面板", checked: layout.historyVisible, onSelect: () => setLayout({ historyVisible: !layout.historyVisible, sidebarVisible: true }) },
         { type: "checkbox", label: "控制台面板", checked: layout.consoleVisible, onSelect: () => setLayout({ consoleVisible: !layout.consoleVisible }) },
         { type: "separator" },
         {
