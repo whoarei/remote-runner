@@ -1,10 +1,11 @@
 import { create } from "zustand";
-import { api, DeviceProfile, RunEvent, RunStatus, WorkspaceEntry, RunRequest, errorMessage } from "./api";
+import { api, DeviceProfile, RunEvent, RunStatus, RunRequest, WorkspaceEntryKind, errorMessage } from "./api";
 import { ChangeChoice, dirtyDocument, EditorLanguage, inferLanguage, uploadBusy } from "./editorDocument";
 import { appendOutput, MAX_TOTAL_OUTPUT_BYTES, OutputBuffer, trimOutput } from "./outputBuffer";
 import { DEFAULT_RUN_DRAFT, isActiveRun, newestStatus, RunDraft } from "./runState";
 import { loadWorkspaceHistory, rememberWorkspace, saveWorkspaceHistory } from "./workspaceHistory";
 import { DEFAULT_LAYOUT, LayoutState, loadLayout, normalizeLayout, saveLayout } from "./layoutState";
+import { collectScripts, dropSubtree, isWithin, joinPath, nameOf, parentOf, rekeySubtree, rootTree, withNode, WORKSPACE_ROOT, WorkspacePath, WorkspaceTree } from "./workspaceTree";
 
 interface AppState {
   devices: DeviceProfile[];
@@ -12,7 +13,10 @@ interface AppState {
 
   workspaceDir: string | null;
   recentWorkspaces: string[];
-  workspaceFiles: WorkspaceEntry[];
+  /** 目录树缓存：键为相对目录路径，"" 为工作区根 */
+  workspaceTree: WorkspaceTree;
+  workspaceError: string | null;
+  workspaceMutating: boolean;
   openFile: string | null;
   fileContent: string;
   savedContent: string;
@@ -48,6 +52,12 @@ interface AppState {
   loadDevices: () => Promise<void>;
   selectDevice: (id: string | null) => void;
   setWorkspaceDir: (dir: string | null) => Promise<void>;
+  loadWorkspaceDir: (dir: WorkspacePath) => Promise<void>;
+  toggleWorkspaceDir: (dir: WorkspacePath) => Promise<void>;
+  createWorkspaceEntry: (dir: WorkspacePath, name: string, kind: WorkspaceEntryKind) => Promise<boolean>;
+  renameWorkspaceEntry: (path: WorkspacePath, newName: string) => Promise<boolean>;
+  deleteWorkspaceEntry: (path: WorkspacePath) => Promise<boolean>;
+  dismissWorkspaceError: () => void;
   openWorkspaceFile: (name: string) => Promise<void>;
   editContent: (content: string) => void;
   setLanguage: (language: EditorLanguage) => void;
@@ -64,6 +74,18 @@ interface AppState {
 }
 
 let loadSequence = 0;
+/** 工作区被替换后作废仍在进行的目录加载与变更响应 */
+let workspaceSequence = 0;
+
+/** 工作区变更（新建 / 重命名 / 删除）的前置检查，返回可见提示或 null */
+function workspaceChangeBlocker(
+  state: Pick<AppState, "workspaceDir" | "workspaceMutating" | "saving" | "starting" | "guarding" | "runs">,
+): string | null {
+  if (!state.workspaceDir) return "请先选择工作区";
+  if (state.workspaceMutating || state.saving || state.starting || state.guarding) return "请等待当前操作完成";
+  if (uploadBusy(state)) return "任务正在准备、同步或停止，请稍后修改工作区";
+  return null;
+}
 
 /** Retain live runs and the selected history entry; bound output across all runs. */
 function pruneRuns(state: Pick<AppState, "runs" | "history" | "outputBuffers" | "activeRunId">, pending: string[] = []) {
@@ -94,7 +116,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   workspaceDir: null,
   recentWorkspaces: loadWorkspaceHistory(),
-  workspaceFiles: [],
+  workspaceTree: {},
+  workspaceError: null,
+  workspaceMutating: false,
   openFile: null,
   fileContent: "",
   savedContent: "",
@@ -151,16 +175,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   setWorkspaceDir: async (dir) => {
     if (get().saving || get().starting || get().guarding) return;
     const sequence = ++loadSequence;
+    ++workspaceSequence;
     // This selection owns loading cleanup as soon as it invalidates the old read.
     set({ loading: false });
     if (!await get().confirmUnsaved() || sequence !== loadSequence) return;
-    set({ loading: true, editorError: null });
+    set({ loading: true, editorError: null, workspaceError: null });
     try {
-      const files = dir ? await api.listWorkspace(dir) : [];
+      const workspaceTree = dir ? rootTree(await api.listWorkspaceDir(dir, WORKSPACE_ROOT)) : {};
       if (sequence !== loadSequence) return;
       const recentWorkspaces = dir ? rememberWorkspace(get().recentWorkspaces, dir) : get().recentWorkspaces;
       if (dir) saveWorkspaceHistory(recentWorkspaces);
-      set((s) => ({ workspaceDir: dir, workspaceFiles: files, recentWorkspaces,
+      set((s) => ({ workspaceDir: dir, workspaceTree, recentWorkspaces,
         openFile: null, fileContent: "", savedContent: "", revision: null,
         conflict: false, documentGeneration: s.documentGeneration + 1,
         runDraft: { ...s.runDraft, entry: "" } }));
@@ -171,6 +196,118 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (sequence === loadSequence) set({ loading: false });
     }
   },
+
+  loadWorkspaceDir: async (dir) => {
+    const root = get().workspaceDir;
+    if (!root) return;
+    const sequence = workspaceSequence;
+    try {
+      const entries = await api.listWorkspaceDir(root, dir);
+      if (sequence !== workspaceSequence || get().workspaceDir !== root) return;
+      set((s) => ({ workspaceTree: withNode(s.workspaceTree, dir, (node) =>
+        ({ entries, expanded: node?.expanded ?? false, loaded: true })) }));
+    } catch (error) {
+      if (sequence === workspaceSequence && get().workspaceDir === root) set({ workspaceError: errorMessage(error) });
+    }
+  },
+
+  toggleWorkspaceDir: async (dir) => {
+    const node = get().workspaceTree[dir];
+    // 从未展开过的目录还没有缓存节点，首次展开时建立并按需加载
+    const expanded = !node?.expanded;
+    set((s) => ({ workspaceTree: withNode(s.workspaceTree, dir, (current) =>
+      ({ entries: current?.entries ?? [], expanded, loaded: current?.loaded ?? false })) }));
+    if (expanded && !node?.loaded) await get().loadWorkspaceDir(dir);
+  },
+
+  createWorkspaceEntry: async (dir, name, kind) => {
+    const state = get();
+    const blocked = workspaceChangeBlocker(state);
+    if (blocked) { set({ workspaceError: blocked }); return false; }
+    const root = state.workspaceDir!;
+    const sequence = workspaceSequence;
+    set({ workspaceMutating: true, workspaceError: null });
+    try {
+      await api.createWorkspaceEntry(root, joinPath(dir, name), kind);
+      if (sequence !== workspaceSequence) return false;
+      // 展开父目录，让新条目立刻可见
+      set((s) => ({ workspaceTree: withNode(s.workspaceTree, dir, (node) =>
+        ({ entries: node?.entries ?? [], expanded: true, loaded: node?.loaded ?? false })) }));
+      await get().loadWorkspaceDir(dir);
+      return true;
+    } catch (error) {
+      if (sequence === workspaceSequence) set({ workspaceError: errorMessage(error) });
+      return false;
+    } finally {
+      set({ workspaceMutating: false });
+    }
+  },
+
+  renameWorkspaceEntry: async (path, newName) => {
+    const state = get();
+    const blocked = workspaceChangeBlocker(state);
+    if (blocked) { set({ workspaceError: blocked }); return false; }
+    const root = state.workspaceDir!;
+    const dir = parentOf(path);
+    const target = joinPath(dir, newName);
+    if (target === path) return true;
+    const sequence = workspaceSequence;
+    set({ workspaceMutating: true, workspaceError: null });
+    try {
+      await api.renameWorkspaceEntry(root, path, target);
+      if (sequence !== workspaceSequence) return false;
+      // 同一个条目换了路径：缓存子树改键，打开的文档与入口草稿跟随移动
+      set((s) => {
+        const moved = (value: string | null) =>
+          value && isWithin(value, path) ? target + value.slice(path.length) : value;
+        const openFile = moved(s.openFile);
+        return { workspaceTree: rekeySubtree(s.workspaceTree, path, target), openFile,
+          language: openFile && openFile !== s.openFile ? inferLanguage(nameOf(openFile)) : s.language,
+          runDraft: { ...s.runDraft, entry: moved(s.runDraft.entry) ?? "" } };
+      });
+      await get().loadWorkspaceDir(dir);
+      return true;
+    } catch (error) {
+      if (sequence === workspaceSequence) set({ workspaceError: errorMessage(error) });
+      return false;
+    } finally {
+      set({ workspaceMutating: false });
+    }
+  },
+
+  deleteWorkspaceEntry: async (path) => {
+    const state = get();
+    const blocked = workspaceChangeBlocker(state);
+    if (blocked) { set({ workspaceError: blocked }); return false; }
+    const root = state.workspaceDir!;
+    const dir = parentOf(path);
+    // 删除会连带丢掉未保存修改，先复用既有的保存 / 放弃 / 取消确认
+    if (state.openFile && isWithin(state.openFile, path) && !await get().confirmUnsaved()) return false;
+    const sequence = workspaceSequence;
+    set({ workspaceMutating: true, workspaceError: null });
+    try {
+      await api.deleteWorkspaceEntry(root, path);
+      if (sequence !== workspaceSequence) return false;
+      set((s) => {
+        const closed = !!s.openFile && isWithin(s.openFile, path);
+        // 入口草稿无论是否打开都要跟随删除，否则下拉框会指向已删除的文件
+        const entry = s.runDraft.entry && isWithin(s.runDraft.entry, path) ? "" : s.runDraft.entry;
+        const runDraft = entry === s.runDraft.entry ? s.runDraft : { ...s.runDraft, entry };
+        return { workspaceTree: dropSubtree(s.workspaceTree, path), runDraft,
+          ...(closed ? { openFile: null, fileContent: "", savedContent: "", revision: null,
+            conflict: false, documentGeneration: s.documentGeneration + 1 } : {}) };
+      });
+      await get().loadWorkspaceDir(dir);
+      return true;
+    } catch (error) {
+      if (sequence === workspaceSequence) set({ workspaceError: errorMessage(error) });
+      return false;
+    } finally {
+      set({ workspaceMutating: false });
+    }
+  },
+
+  dismissWorkspaceError: () => set({ workspaceError: null }),
 
   openWorkspaceFile: async (name) => {
     const dir = get().workspaceDir;

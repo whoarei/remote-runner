@@ -51,7 +51,7 @@ test("recent workspaces persist successful opens, reorder repeats, and survive f
     else Reflect.deleteProperty(globalThis, "localStorage");
     useAppStore.setState(originalState, true);
   });
-  t.mock.method(api, "listWorkspace", async (dir: string) => {
+  t.mock.method(api, "listWorkspaceDir", async (dir: string) => {
     if (dir === "/missing") throw new Error("Directory no longer exists");
     return [{ name: "main.py", is_dir: false }];
   });
@@ -120,7 +120,7 @@ test("latest file selection wins including stale failures and cross-workspace re
   assert.equal(useAppStore.getState().editorError, null);
   const late = deferred<ReturnType<typeof diskDocument>>();
   t.mock.method(api, "readWorkspaceFile", () => late.promise);
-  t.mock.method(api, "listWorkspace", async () => []);
+  t.mock.method(api, "listWorkspaceDir", async () => []);
   const oldRead = useAppStore.getState().openWorkspaceFile("c.py");
   await Promise.resolve();
   await useAppStore.getState().setWorkspaceDir("/new");

@@ -70,7 +70,7 @@ test("run drafts survive panel remount and layout reset; workspace switch clears
   assert.match(markup, /echo retained/);
   assert.match(markup, /value="42"/);
   assert.match(markup, /value="pipe" selected/);
-  t.mock.method(api, "listWorkspace", async () => []);
+  t.mock.method(api, "listWorkspaceDir", async () => []);
   await s.setWorkspaceDir("/new");
   assert.equal(useAppStore.getState().runDraft.entry, "");
   assert.equal(useAppStore.getState().runDraft.command, "echo retained");

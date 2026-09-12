@@ -55,6 +55,8 @@ export interface WorkspaceEntry {
   is_dir: boolean;
 }
 
+export type WorkspaceEntryKind = "file" | "dir";
+
 export interface WorkspaceDocument {
   content: string;
   revision: string;
@@ -86,12 +88,18 @@ export const api = {
   listSerialPorts: () => invoke<string[]>("list_serial_ports"),
   listWslDistributions: () => invoke<string[]>("list_wsl_distributions"),
 
-  listWorkspace: (dir: string) =>
-    invoke<WorkspaceEntry[]>("list_workspace", { dir }),
+  listWorkspaceDir: (dir: string, subdir: string) =>
+    invoke<WorkspaceEntry[]>("list_workspace_dir", { dir, subdir }),
   readWorkspaceFile: (dir: string, name: string) =>
     invoke<WorkspaceDocument>("read_workspace_file", { dir, name }),
   writeWorkspaceFile: (request: SaveWorkspaceRequest) =>
     invoke<{ revision: string }>("write_workspace_file", { request }),
+  createWorkspaceEntry: (dir: string, name: string, kind: WorkspaceEntryKind) =>
+    invoke<void>("create_workspace_entry", { dir, name, kind }),
+  renameWorkspaceEntry: (dir: string, oldName: string, newName: string) =>
+    invoke<void>("rename_workspace_entry", { dir, oldName, newName }),
+  deleteWorkspaceEntry: (dir: string, name: string) =>
+    invoke<void>("delete_workspace_entry", { dir, name }),
 
   runScript: (request: RunRequest) => invoke<string>("run_script", { request }),
   stopRun: (runId: string) => invoke<void>("stop_run", { runId }),

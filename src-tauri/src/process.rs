@@ -33,7 +33,9 @@ impl RunState {
             Self::Preparing | Self::Syncing | Self::Starting | Self::Running | Self::Stopping
         )
     }
-    pub const fn blocks_workspace_save(self) -> bool {
+    /// Preparation, sync, and stop keep the workspace under transport control,
+    /// so every local workspace change (save/create/rename/delete) is blocked.
+    pub const fn blocks_workspace_change(self) -> bool {
         matches!(self, Self::Preparing | Self::Syncing | Self::Stopping)
     }
 }

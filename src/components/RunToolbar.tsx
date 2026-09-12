@@ -4,18 +4,19 @@ import { api, inferKind, RunRequest, ScriptKind } from "../api";
 import { useAppStore } from "../store";
 import { dirtyDocument } from "../editorDocument";
 import { isActiveRun } from "../runState";
+import { collectScripts } from "../workspaceTree";
 
 export function RunToolbar() {
   const {
     selectedDeviceId,
     devices,
     workspaceDir,
-    workspaceFiles,
+    workspaceTree,
     openFile,
     activeRunId,
     runs,
   } = useAppStore(useShallow((s) => ({ selectedDeviceId: s.selectedDeviceId, devices: s.devices,
-    workspaceDir: s.workspaceDir, workspaceFiles: s.workspaceFiles, openFile: s.openFile,
+    workspaceDir: s.workspaceDir, workspaceTree: s.workspaceTree, openFile: s.openFile,
     activeRunId: s.activeRunId, runs: s.runs })));
 
   const { mode, entry, argsText, command, consoleMode, timeoutSecs } = useAppStore((s) => s.runDraft);
@@ -87,9 +88,7 @@ export function RunToolbar() {
     } catch (e) { alert(`停止失败: ${e}`); }
   };
 
-  const scriptFiles = workspaceFiles.filter(
-    (f) => !f.is_dir && /\.(py|sh)$/i.test(f.name)
-  );
+  const scriptFiles = collectScripts(workspaceTree);
 
   return (
     <div className="run-toolbar">
@@ -106,9 +105,9 @@ export function RunToolbar() {
       {mode === "script" ? (
         <select value={effectiveEntry} onChange={(e) => setDraft({ entry: e.target.value })}>
           <option value="">选择入口脚本…</option>
-          {scriptFiles.map((f) => (
-            <option key={f.name} value={f.name}>
-              {f.name}
+          {scriptFiles.map((path) => (
+            <option key={path} value={path}>
+              {path}
             </option>
           ))}
         </select>

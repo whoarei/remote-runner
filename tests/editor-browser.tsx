@@ -7,8 +7,9 @@ import { WorkspacePanel } from "../src/components/WorkspacePanel";
 import { RunToolbar } from "../src/components/RunToolbar";
 import { RunConsole } from "../src/components/RunConsole";
 import { UnsavedDialog } from "../src/components/UnsavedDialog";
-import { api } from "../src/api";
+import { api, WorkspaceEntry } from "../src/api";
 import { useAppStore } from "../src/store";
+import { rootTree, WORKSPACE_ROOT } from "../src/workspaceTree";
 import "../src/styles.css";
 
 const files: Record<string, { content: string; revision: string }> = {
@@ -16,9 +17,50 @@ const files: Record<string, { content: string; revision: string }> = {
   "run.sh": { content: '#!/bin/sh\n# 测试 Shell 高亮\nNAME="runner"\nfor i in 1 2 3; do\n  echo "$NAME: $i"\ndone\ncat <<EOF\nhello\nEOF\n', revision: "1" },
   "large.py": { content: '# Long line\ntext = "' + "a".repeat(900_000) + '"\nprint(text)\n', revision: "1" },
   "notes.txt": { content: "普通 UTF-8 文本。\n", revision: "1" },
+  "sub/nested.py": { content: "print('子目录脚本')\n", revision: "1" },
 };
-api.readWorkspaceFile = async (_dir, name) => ({ ...files[name], eol: "lf", bom: false });
-api.listWorkspace = async () => Object.keys(files).map((name) => ({ name, is_dir: false }));
+const dirs = new Set<string>(["sub"]);
+
+function listDir(subdir: string): WorkspaceEntry[] {
+  const prefix = subdir ? `${subdir}/` : "";
+  const entries = new Map<string, boolean>();
+  for (const dir of dirs) {
+    const name = dir.slice(prefix.length);
+    if (dir.startsWith(prefix) && name && !name.includes("/")) entries.set(name, true);
+  }
+  for (const file of Object.keys(files)) {
+    const name = file.slice(prefix.length);
+    if (file.startsWith(prefix) && name && !name.includes("/")) entries.set(name, false);
+  }
+  return [...entries.entries()]
+    .map(([name, is_dir]) => ({ name, is_dir }))
+    .sort((a, b) => Number(b.is_dir) - Number(a.is_dir) || a.name.localeCompare(b.name));
+}
+
+function renamePath(path: string, target: string) {
+  for (const [key, value] of Object.entries(files)) {
+    if (key === path || key.startsWith(`${path}/`)) {
+      delete files[key];
+      files[target + key.slice(path.length)] = value;
+    }
+  }
+  for (const dir of [...dirs]) {
+    if (dir === path || dir.startsWith(`${path}/`)) {
+      dirs.delete(dir);
+      dirs.add(target + dir.slice(path.length));
+    }
+  }
+}
+
+api.readWorkspaceFile = async (_dir, name) => {
+  const file = files[name];
+  if (!file) throw { code: "not_found", message: `文件不存在：${name}` };
+  return { ...file, eol: "lf", bom: false };
+};
+api.listWorkspaceDir = async (_dir, subdir) => {
+  if (subdir !== WORKSPACE_ROOT && !dirs.has(subdir)) throw { code: "not_found", message: `目录不存在：${subdir}` };
+  return listDir(subdir);
+};
 api.writeWorkspaceFile = async (request) => {
   await new Promise((resolve) => setTimeout(resolve, 80));
   if (files[request.name].revision !== request.expectedRevision) throw { code: "conflict", message: "文件已被其他程序修改" };
@@ -26,22 +68,42 @@ api.writeWorkspaceFile = async (request) => {
   files[request.name] = { content: request.content, revision };
   return { revision };
 };
+api.createWorkspaceEntry = async (_dir, name, kind) => {
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  if (files[name] || dirs.has(name)) throw { code: "exists", message: `同名文件或目录已存在：${name}` };
+  if (kind === "dir") dirs.add(name);
+  else files[name] = { content: "", revision: "1" };
+};
+api.renameWorkspaceEntry = async (_dir, oldName, newName) => {
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  if (!files[oldName] && !dirs.has(oldName)) throw { code: "not_found", message: `文件或目录不存在：${oldName}` };
+  if ((files[newName] || dirs.has(newName)) && newName !== oldName) throw { code: "exists", message: `目标已存在：${newName}` };
+  renamePath(oldName, newName);
+};
+api.deleteWorkspaceEntry = async (_dir, name) => {
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  if (!files[name] && !dirs.has(name)) throw { code: "not_found", message: `文件或目录不存在：${name}` };
+  for (const key of Object.keys(files)) if (key === name || key.startsWith(`${name}/`)) delete files[key];
+  for (const dir of [...dirs]) if (dir === name || dir.startsWith(`${name}/`)) dirs.delete(dir);
+};
 api.runScript = async () => "fixture-run";
 api.getRunStatus = async () => ({ run_id: "fixture-run", device_name: "模拟设备", label: "界面测试", state: "exited", exit_code: 0, error: null, started_at: "", ended_at: "" });
 api.resizeRunConsole = async () => {};
 useAppStore.setState({ workspaceDir: "/mock-workspace", recentWorkspaces: ["/mock-workspace"],
-  workspaceFiles: await api.listWorkspace("/mock-workspace"), selectedDeviceId: "mock", openFile: "main.py",
+  workspaceTree: rootTree(await api.listWorkspaceDir("/mock-workspace", WORKSPACE_ROOT)),
+  selectedDeviceId: "mock", openFile: "main.py",
   fileContent: files["main.py"].content, savedContent: files["main.py"].content, revision: "1", language: "python" });
 
 function Fixture() {
   return <div className="app">
     <UnsavedDialog />
-    <header className="app-header">编辑器交互验收（模拟文件接口，不连接设备）
+    <header className="app-header">编辑器与文件管理交互验收（模拟文件接口，不连接设备）
       <button onClick={() => { const name = useAppStore.getState().openFile!; files[name] = { content: "# 外部修改\n", revision: String(Number(files[name].revision) + 1) }; }}>模拟外部修改</button>
       <button onClick={() => { for (let i = 0; i < 200; i++) useAppStore.getState().handleRunEvent({ type: "output", run_id: "fixture-run", stream: "stdout", data: btoa("output line\r\n".repeat(50)) }); }}>模拟大量终端输出</button>
+      <button onClick={() => { useAppStore.getState().handleRunEvent({ type: "status", status: { run_id: "fixture-run", device_name: "模拟设备", label: "同步中", state: "syncing", exit_code: null, error: null, started_at: "", ended_at: null } }); }}>模拟同步中（禁止改动工作区）</button>
     </header>
-    <main className="app-main"><aside className="side"><WorkspacePanel /></aside><section className="center"><Editor /></section></main>
-    <footer className="app-footer"><RunToolbar /><RunConsole /></footer>
+    <main className="app-main"><aside className="side"><WorkspacePanel collapsed={false} onToggleCollapse={() => {}} /></aside><section className="center"><Editor /></section></main>
+    <footer className="app-footer"><RunToolbar /><RunConsole collapsed={false} onToggleCollapse={() => {}} /></footer>
   </div>;
 }
 createRoot(document.getElementById("root")!).render(<React.StrictMode><Fixture /></React.StrictMode>);

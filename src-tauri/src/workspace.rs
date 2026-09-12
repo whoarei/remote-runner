@@ -1,5 +1,6 @@
-//! Bounded UTF-8 editing of existing workspace files. This is independent of
-//! transport upload limits. External processes are not covered by our mutex.
+//! Bounded UTF-8 editing plus create/rename/delete/list of workspace entries.
+//! This is independent of transport upload limits. External processes are not
+//! covered by our mutex.
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -31,6 +32,7 @@ impl From<std::io::Error> for FileError {
         let (code, label) = match error.kind() {
             std::io::ErrorKind::NotFound => ("not_found", "文件或目录不存在"),
             std::io::ErrorKind::PermissionDenied => ("permission", "没有文件读写权限"),
+            std::io::ErrorKind::AlreadyExists => ("exists", "同名文件或目录已存在"),
             _ => ("io", "文件操作失败"),
         };
         Self::new(code, format!("{label}：{error}"))
@@ -70,6 +72,19 @@ pub struct Saved {
     pub revision: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EntryKind {
+    File,
+    Dir,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Entry {
+    pub name: String,
+    pub is_dir: bool,
+}
+
 fn redirected(meta: &Metadata) -> bool {
     #[cfg(windows)]
     {
@@ -83,7 +98,26 @@ fn redirected(meta: &Metadata) -> bool {
 }
 
 fn invalid_path() -> FileError {
-    FileError::new("path", "仅可编辑工作区内的普通文件，不支持链接或重定向路径")
+    FileError::new(
+        "path",
+        "仅可操作工作区内的普通文件或目录，不支持链接或重定向路径",
+    )
+}
+
+/// Canonicalize the selected root, rejecting redirected roots and ancestors.
+fn canonical_root(dir: &str) -> Result<PathBuf> {
+    let absolute_root = std::path::absolute(dir)?;
+    // Check the selected root and its ancestors too (not just the final entry).
+    for ancestor in absolute_root.ancestors() {
+        if redirected(&fs::symlink_metadata(ancestor)?) {
+            return Err(invalid_path());
+        }
+    }
+    let root = fs::canonicalize(&absolute_root)?;
+    if !root.is_dir() {
+        return Err(invalid_path());
+    }
+    Ok(root)
 }
 
 fn resolve(dir: &str, name: &str) -> Result<PathBuf> {
@@ -97,17 +131,7 @@ fn resolve(dir: &str, name: &str) -> Result<PathBuf> {
     {
         return Err(invalid_path());
     }
-    // Check the selected root and its ancestors too (not just the final file).
-    let absolute_root = std::path::absolute(dir)?;
-    for ancestor in absolute_root.ancestors() {
-        if redirected(&fs::symlink_metadata(ancestor)?) {
-            return Err(invalid_path());
-        }
-    }
-    let root = fs::canonicalize(&absolute_root)?;
-    if !root.is_dir() {
-        return Err(invalid_path());
-    }
+    let root = canonical_root(dir)?;
     let mut path = root.clone();
     for part in relative.components() {
         path.push(part);
@@ -303,6 +327,205 @@ pub fn write(request: SaveRequest) -> Result<Saved> {
     })
 }
 
+// ---------- 条目管理（新建 / 重命名 / 删除 / 列目录） ----------
+
+const NAME_LIMIT: usize = 255;
+
+fn invalid_name() -> FileError {
+    FileError::new(
+        "name",
+        "名称无效：不能为空，不能包含 \\ / : * ? \" < > | 或控制字符，不能以 . 开头、以空格或 . 结尾，长度不超过 255",
+    )
+}
+
+/// Windows device names are rejected on every platform so a workspace keeps
+/// the same meaning when it is uploaded to SSH / WSL / serial devices.
+fn reserved_device(name: &str) -> bool {
+    const DEVICES: [&str; 22] = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    let stem = name.split('.').next().unwrap_or("");
+    DEVICES
+        .iter()
+        .any(|device| device.eq_ignore_ascii_case(stem))
+}
+
+/// Split a workspace-relative path into validated components. Hidden entries
+/// (`.` prefix) are rejected: the tree never lists them, so they cannot be
+/// addressed from the UI and must not be created either.
+fn components(relative: &str) -> Result<Vec<&str>> {
+    if relative.is_empty() {
+        return Err(invalid_name());
+    }
+    let mut parts = Vec::new();
+    for part in relative.split('/') {
+        if part.is_empty() || part == "." || part == ".." || part.starts_with('.') {
+            return Err(invalid_name());
+        }
+        if part.contains(['\\', ':', '*', '?', '"', '<', '>', '|', '\0'])
+            || part.chars().any(char::is_control)
+            || part.ends_with([' ', '.'])
+            || part.len() > NAME_LIMIT
+            || reserved_device(part)
+        {
+            return Err(invalid_name());
+        }
+        parts.push(part);
+    }
+    Ok(parts)
+}
+
+fn display(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+/// Resolve an existing directory inside the workspace. Every component must be
+/// a real directory: links, junctions, and escapes are rejected on the way.
+fn resolve_dir(root: &Path, parts: &[&str]) -> Result<PathBuf> {
+    let mut path = root.to_path_buf();
+    for part in parts {
+        path.push(part);
+        if redirected(&fs::symlink_metadata(&path)?) {
+            return Err(invalid_path());
+        }
+        if !path.is_dir() {
+            return Err(FileError::new(
+                "not_found",
+                format!("目录不存在：{}", display(root, &path)),
+            ));
+        }
+    }
+    Ok(path)
+}
+
+/// Resolve an existing file or directory, returning its metadata.
+fn resolve_entry(root: &Path, parts: &[&str]) -> Result<(PathBuf, Metadata)> {
+    let (name, parents) = parts.split_last().ok_or_else(invalid_name)?;
+    let path = resolve_dir(root, parents)?.join(name);
+    let meta = fs::symlink_metadata(&path)?;
+    if redirected(&meta) {
+        return Err(invalid_path());
+    }
+    let canonical = fs::canonicalize(&path)?;
+    if !canonical.starts_with(root) || canonical != path {
+        return Err(invalid_path());
+    }
+    Ok((path, meta))
+}
+
+/// Create an empty file or directory. Intermediate directories must exist.
+/// Caller holds FILE_OPERATIONS and checks that no desktop run is syncing.
+pub fn create(dir: &str, relative: &str, kind: EntryKind) -> Result<()> {
+    let parts = components(relative)?;
+    let root = canonical_root(dir)?;
+    let (name, parents) = parts.split_last().ok_or_else(invalid_name)?;
+    let path = resolve_dir(&root, parents)?.join(name);
+    match kind {
+        EntryKind::File => {
+            OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)?;
+        }
+        EntryKind::Dir => fs::create_dir(&path)?,
+    }
+    if redirected(&fs::symlink_metadata(&path)?) {
+        let _ = match kind {
+            EntryKind::File => fs::remove_file(&path),
+            EntryKind::Dir => fs::remove_dir(&path),
+        };
+        return Err(invalid_path());
+    }
+    Ok(())
+}
+
+/// Rename a file or directory. Existing targets are never overwritten; a
+/// case-only rename of the same entry is allowed.
+/// Caller holds FILE_OPERATIONS and checks that no desktop run is syncing.
+pub fn rename(dir: &str, old_relative: &str, new_relative: &str) -> Result<()> {
+    let old_parts = components(old_relative)?;
+    let new_parts = components(new_relative)?;
+    if old_parts == new_parts {
+        return Ok(());
+    }
+    if new_parts.starts_with(old_parts.as_slice()) {
+        return Err(FileError::new("path", "不能把目录重命名到自身内部"));
+    }
+    let root = canonical_root(dir)?;
+    let (source, _) = resolve_entry(&root, &old_parts)?;
+    let (name, parents) = new_parts.split_last().ok_or_else(invalid_name)?;
+    let target = resolve_dir(&root, parents)?.join(name);
+    if let Ok(existing) = fs::symlink_metadata(&target) {
+        // Canonicalizing both sides makes a case-only rename of the same entry
+        // compare equal while two distinct entries keep conflicting.
+        let same_entry =
+            !redirected(&existing) && fs::canonicalize(&source)? == fs::canonicalize(&target)?;
+        if !same_entry {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!("目标已存在：{}", display(&root, &target)),
+            )
+            .into());
+        }
+    }
+    fs::rename(&source, &target)?;
+    Ok(())
+}
+
+/// Delete a file, or a directory with everything inside it. The workspace root
+/// itself can never be addressed because a relative path is required.
+/// Caller holds FILE_OPERATIONS and checks that no desktop run is syncing.
+pub fn delete(dir: &str, relative: &str) -> Result<()> {
+    let parts = components(relative)?;
+    let root = canonical_root(dir)?;
+    let (path, meta) = resolve_entry(&root, &parts)?;
+    if meta.is_dir() {
+        fs::remove_dir_all(&path)?;
+    } else {
+        fs::remove_file(&path)?;
+    }
+    Ok(())
+}
+
+/// List one directory level for the workspace tree. Hidden entries, links, and
+/// junctions are skipped so the tree only offers entries the app can operate on.
+pub fn list_dir(dir: &str, subdir: &str) -> Result<Vec<Entry>> {
+    let root = canonical_root(dir)?;
+    let parts = if subdir.is_empty() {
+        Vec::new()
+    } else {
+        components(subdir)?
+    };
+    let path = resolve_dir(&root, &parts)?;
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(&path)? {
+        let entry = entry?;
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        if name.starts_with('.') {
+            continue;
+        }
+        // An entry may vanish between readdir and stat; skip instead of failing.
+        let Ok(meta) = fs::symlink_metadata(entry.path()) else {
+            continue;
+        };
+        if redirected(&meta) {
+            continue;
+        }
+        entries.push(Entry {
+            name,
+            is_dir: meta.is_dir(),
+        });
+    }
+    entries.sort_by(|a, b| (b.is_dir, a.name.as_str()).cmp(&(a.is_dir, b.name.as_str())));
+    Ok(entries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -466,5 +689,215 @@ mod tests {
                 & 0o777,
             0o755
         );
+    }
+
+    fn names(entries: Vec<Entry>) -> Vec<(String, bool)> {
+        entries
+            .into_iter()
+            .map(|entry| (entry.name, entry.is_dir))
+            .collect()
+    }
+
+    #[test]
+    fn creates_files_and_directories_and_lists_one_level() {
+        let f = Fixture::new(b"ok");
+        create(f.dir(), "notes.txt", EntryKind::File).unwrap();
+        create(f.dir(), "sub", EntryKind::Dir).unwrap();
+        create(f.dir(), "sub/inner.py", EntryKind::File).unwrap();
+        assert_eq!(fs::read(f.0.join("notes.txt")).unwrap(), b"");
+        assert!(f.0.join("sub").join("inner.py").is_file());
+        assert_eq!(
+            names(list_dir(f.dir(), "").unwrap()),
+            [
+                ("sub".to_string(), true),
+                ("main.py".to_string(), false),
+                ("notes.txt".to_string(), false)
+            ]
+        );
+        assert_eq!(
+            names(list_dir(f.dir(), "sub").unwrap()),
+            [("inner.py".to_string(), false)]
+        );
+        assert_eq!(
+            create(f.dir(), "notes.txt", EntryKind::File)
+                .unwrap_err()
+                .code,
+            "exists"
+        );
+        assert_eq!(
+            create(f.dir(), "sub", EntryKind::Dir).unwrap_err().code,
+            "exists"
+        );
+        assert_eq!(
+            create(f.dir(), "missing/inner.py", EntryKind::File)
+                .unwrap_err()
+                .code,
+            "not_found"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_entry_names_and_workspace_escapes() {
+        let f = Fixture::new(b"ok");
+        let long = "n".repeat(NAME_LIMIT + 1);
+        for name in [
+            "",
+            ".",
+            "..",
+            "../evil",
+            "a/../b",
+            "/abs",
+            "a//b",
+            ".hidden",
+            "con",
+            "NUL.txt",
+            "a\\b",
+            "a:b",
+            "bad*name",
+            "tail.",
+            "tail ",
+            "a\0b",
+            "ctrl\u{1}",
+            long.as_str(),
+        ] {
+            assert_eq!(
+                create(f.dir(), name, EntryKind::File).unwrap_err().code,
+                "name",
+                "{name:?}"
+            );
+            assert_eq!(delete(f.dir(), name).unwrap_err().code, "name", "{name:?}");
+            assert_eq!(
+                rename(f.dir(), "main.py", name).unwrap_err().code,
+                "name",
+                "{name:?}"
+            );
+            assert_eq!(
+                rename(f.dir(), name, "ok.py").unwrap_err().code,
+                "name",
+                "{name:?}"
+            );
+            // An empty subdir selects the workspace root, so listing allows it.
+            if !name.is_empty() {
+                assert_eq!(
+                    list_dir(f.dir(), name).unwrap_err().code,
+                    "name",
+                    "{name:?}"
+                );
+            }
+        }
+        assert_eq!(fs::read_dir(&f.0).unwrap().count(), 1);
+        assert!(!f.0.join("evil").exists());
+    }
+
+    #[test]
+    fn renames_entries_without_overwriting_targets() {
+        let f = Fixture::new(b"original");
+        create(f.dir(), "sub", EntryKind::Dir).unwrap();
+        fs::write(f.0.join("other.txt"), b"other").unwrap();
+        rename(f.dir(), "main.py", "renamed.py").unwrap();
+        assert_eq!(fs::read(f.0.join("renamed.py")).unwrap(), b"original");
+        assert!(!f.0.join("main.py").exists());
+        assert_eq!(
+            rename(f.dir(), "renamed.py", "other.txt").unwrap_err().code,
+            "exists"
+        );
+        assert_eq!(fs::read(f.0.join("other.txt")).unwrap(), b"other");
+        assert_eq!(
+            rename(f.dir(), "renamed.py", "sub").unwrap_err().code,
+            "exists"
+        );
+        rename(f.dir(), "renamed.py", "sub/moved.py").unwrap();
+        assert!(f.0.join("sub").join("moved.py").is_file());
+        rename(f.dir(), "sub", "moved").unwrap();
+        assert!(f.0.join("moved").join("moved.py").is_file());
+        assert_eq!(
+            rename(f.dir(), "moved", "moved/nested").unwrap_err().code,
+            "path"
+        );
+        assert!(f.0.join("moved").join("moved.py").is_file());
+        rename(f.dir(), "other.txt", "other.txt").unwrap();
+        assert_eq!(
+            rename(f.dir(), "gone.py", "x.py").unwrap_err().code,
+            "not_found"
+        );
+    }
+
+    #[test]
+    fn deletes_files_and_directories_recursively() {
+        let f = Fixture::new(b"original");
+        create(f.dir(), "sub", EntryKind::Dir).unwrap();
+        create(f.dir(), "sub/nested", EntryKind::Dir).unwrap();
+        create(f.dir(), "sub/nested/deep.py", EntryKind::File).unwrap();
+        delete(f.dir(), "main.py").unwrap();
+        assert!(!f.0.join("main.py").exists());
+        delete(f.dir(), "sub").unwrap();
+        assert!(!f.0.join("sub").exists());
+        assert_eq!(delete(f.dir(), "main.py").unwrap_err().code, "not_found");
+        assert_eq!(delete(f.dir(), "sub/nested").unwrap_err().code, "not_found");
+        assert!(f.0.is_dir());
+    }
+
+    #[test]
+    fn hidden_entries_are_not_listed_or_addressable() {
+        let f = Fixture::new(b"ok");
+        fs::write(f.0.join(".gitignore"), b"x").unwrap();
+        fs::create_dir(f.0.join(".git")).unwrap();
+        assert_eq!(
+            names(list_dir(f.dir(), "").unwrap()),
+            [("main.py".to_string(), false)]
+        );
+        assert_eq!(delete(f.dir(), ".gitignore").unwrap_err().code, "name");
+        assert_eq!(
+            rename(f.dir(), ".gitignore", "visible").unwrap_err().code,
+            "name"
+        );
+        assert!(f.0.join(".gitignore").is_file());
+        assert!(f.0.join(".git").is_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn entry_operations_reject_links_and_hide_them_from_the_tree() {
+        use std::os::unix::fs::symlink;
+        let f = Fixture::new(b"ok");
+        fs::create_dir(f.0.join("real")).unwrap();
+        symlink(f.0.join("real"), f.0.join("link")).unwrap();
+        symlink(f.0.join("main.py"), f.0.join("file-link.py")).unwrap();
+        assert_eq!(
+            names(list_dir(f.dir(), "").unwrap()),
+            [("real".to_string(), true), ("main.py".to_string(), false)]
+        );
+        assert_eq!(delete(f.dir(), "link").unwrap_err().code, "path");
+        assert_eq!(rename(f.dir(), "link", "other").unwrap_err().code, "path");
+        assert_eq!(
+            create(f.dir(), "link/inner.py", EntryKind::File)
+                .unwrap_err()
+                .code,
+            "path"
+        );
+        assert!(f.0.join("real").is_dir());
+        assert!(f.0.join("main.py").is_file());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn entry_operations_reject_links_and_hide_them_from_the_tree() {
+        let f = Fixture::new(b"ok");
+        fs::create_dir(f.0.join("real")).unwrap();
+        match std::os::windows::fs::symlink_dir(f.0.join("real"), f.0.join("link")) {
+            Ok(()) => {
+                assert_eq!(
+                    names(list_dir(f.dir(), "").unwrap()),
+                    [("real".to_string(), true), ("main.py".to_string(), false)]
+                );
+                assert_eq!(delete(f.dir(), "link").unwrap_err().code, "path");
+                assert_eq!(rename(f.dir(), "link", "other").unwrap_err().code, "path");
+                assert!(f.0.join("real").is_dir());
+            }
+            Err(error) if error.raw_os_error() == Some(1314) => {
+                eprintln!("SKIP Windows link check: this account lacks symlink creation privilege");
+            }
+            Err(error) => panic!("cannot create test symlink: {error}"),
+        }
     }
 }

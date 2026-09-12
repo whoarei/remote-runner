@@ -1,7 +1,6 @@
 use crate::device::{DeviceProfile, DeviceStore};
 use crate::error::Result;
 use crate::runner::{RunManager, RunStatus};
-use serde::Serialize;
 use std::path::PathBuf;
 
 pub struct AppState {
@@ -14,12 +13,6 @@ pub struct AppState {
 #[tauri::command]
 pub fn drain_run_events(state: tauri::State<'_, AppState>) -> Vec<crate::runner::RunEvent> {
     crate::events::drain(&mut state.event_rx.lock(), &state.run_manager)
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct WorkspaceEntry {
-    pub name: String,
-    pub is_dir: bool,
 }
 
 // ---------- 设备管理 ----------
@@ -92,29 +85,36 @@ pub async fn list_wsl_distributions() -> Result<Vec<String>> {
     crate::wsl::list_distributions().await
 }
 
+type WorkspaceResult<T> = std::result::Result<T, crate::workspace::FileError>;
+
+/// RunStatus does not expose workspace identity. Conservatively block every
+/// workspace change during preparation/sync of ANY desktop run, including a run
+/// being stopped, so the transport never scans a directory that is changing.
+fn blocked_by_run(state: &AppState) -> Option<crate::workspace::FileError> {
+    state
+        .run_manager
+        .list_running()
+        .iter()
+        .any(|run| run.state.blocks_workspace_change())
+        .then(|| {
+            crate::workspace::FileError::new("busy", "任务正在准备、同步或停止，请稍后修改工作区")
+        })
+}
+
 #[tauri::command]
-pub fn list_workspace(dir: String) -> Result<Vec<WorkspaceEntry>> {
-    let mut entries = Vec::new();
-    for entry in std::fs::read_dir(&dir)? {
-        let entry = entry?;
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') {
-            continue;
-        }
-        entries.push(WorkspaceEntry {
-            name,
-            is_dir: entry.metadata()?.is_dir(),
-        });
-    }
-    entries.sort_by(|a, b| (b.is_dir, a.name.clone()).cmp(&(a.is_dir, b.name.clone())));
-    Ok(entries)
+pub fn list_workspace_dir(
+    dir: String,
+    subdir: String,
+) -> WorkspaceResult<Vec<crate::workspace::Entry>> {
+    // Read-only listing takes no lock: the tree stays usable during a run.
+    crate::workspace::list_dir(&dir, &subdir)
 }
 
 #[tauri::command]
 pub fn read_workspace_file(
     dir: String,
     name: String,
-) -> std::result::Result<crate::workspace::Document, crate::workspace::FileError> {
+) -> WorkspaceResult<crate::workspace::Document> {
     let _guard = crate::workspace::FILE_OPERATIONS.lock();
     crate::workspace::read(&dir, &name)
 }
@@ -123,22 +123,53 @@ pub fn read_workspace_file(
 pub fn write_workspace_file(
     state: tauri::State<'_, AppState>,
     request: crate::workspace::SaveRequest,
-) -> std::result::Result<crate::workspace::Saved, crate::workspace::FileError> {
+) -> WorkspaceResult<crate::workspace::Saved> {
     let _guard = crate::workspace::FILE_OPERATIONS.lock();
-    // RunStatus does not expose workspace identity. Conservatively block saves
-    // during preparation/sync of ANY desktop run, including a run being stopped.
-    if state
-        .run_manager
-        .list_running()
-        .iter()
-        .any(|run| run.state.blocks_workspace_save())
-    {
-        return Err(crate::workspace::FileError::new(
-            "busy",
-            "任务正在准备、同步或停止，请稍后保存",
-        ));
+    if let Some(busy) = blocked_by_run(&state) {
+        return Err(busy);
     }
     crate::workspace::write(request)
+}
+
+#[tauri::command]
+pub fn create_workspace_entry(
+    state: tauri::State<'_, AppState>,
+    dir: String,
+    name: String,
+    kind: crate::workspace::EntryKind,
+) -> WorkspaceResult<()> {
+    let _guard = crate::workspace::FILE_OPERATIONS.lock();
+    if let Some(busy) = blocked_by_run(&state) {
+        return Err(busy);
+    }
+    crate::workspace::create(&dir, &name, kind)
+}
+
+#[tauri::command]
+pub fn rename_workspace_entry(
+    state: tauri::State<'_, AppState>,
+    dir: String,
+    old_name: String,
+    new_name: String,
+) -> WorkspaceResult<()> {
+    let _guard = crate::workspace::FILE_OPERATIONS.lock();
+    if let Some(busy) = blocked_by_run(&state) {
+        return Err(busy);
+    }
+    crate::workspace::rename(&dir, &old_name, &new_name)
+}
+
+#[tauri::command]
+pub fn delete_workspace_entry(
+    state: tauri::State<'_, AppState>,
+    dir: String,
+    name: String,
+) -> WorkspaceResult<()> {
+    let _guard = crate::workspace::FILE_OPERATIONS.lock();
+    if let Some(busy) = blocked_by_run(&state) {
+        return Err(busy);
+    }
+    crate::workspace::delete(&dir, &name)
 }
 
 // ---------- 运行控制 ----------

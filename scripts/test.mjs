@@ -5,16 +5,17 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const directory = await mkdtemp(join(tmpdir(), "remote-runner-tests-"));
+const entries = ["store", "layout", "review", "workspace"];
 try {
   await build({
-    entryPoints: ["tests/store.test.ts", "tests/layout.test.ts", "tests/review.test.ts"],
+    entryPoints: entries.map((name) => `tests/${name}.test.ts`),
     outdir: directory,
     outExtension: { ".js": ".cjs" },
     bundle: true,
     platform: "node",
     format: "cjs",
   });
-  const result = spawnSync(process.execPath, ["--test", join(directory, "store.test.cjs"), join(directory, "layout.test.cjs"), join(directory, "review.test.cjs")], { stdio: "inherit" });
+  const result = spawnSync(process.execPath, ["--test", ...entries.map((name) => join(directory, `${name}.test.cjs`))], { stdio: "inherit" });
   process.exitCode = result.status ?? 1;
 } finally {
   await rm(directory, { recursive: true, force: true });
