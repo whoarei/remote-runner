@@ -22,7 +22,7 @@ pub fn start_minimized(args: &[String]) -> bool {
     args.iter().skip(1).any(|arg| arg == "--minimized")
 }
 
-fn show_main_window(app: &AppHandle) {
+pub fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
         let _ = window.unminimize();
         let _ = window.show();

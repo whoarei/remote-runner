@@ -26,6 +26,15 @@ pub fn run() {
         .init();
 
     tauri::Builder::default()
+        // Single instance must be registered first: a second launch exits
+        // immediately and its callback runs in the already-running instance.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // An autostart relaunch (`--minimized`) must not pop the window;
+            // a manual launch activates the existing main window instead.
+            if !tray::start_minimized(&args) {
+                tray::show_main_window(app);
+            }
+        }))
         .plugin(
             tauri_plugin_autostart::Builder::new()
                 .args(["--minimized"])
