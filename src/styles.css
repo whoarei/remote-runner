@@ -61,7 +61,7 @@ body,
   align-items: center;
   justify-content: center;
   gap: 8px;
-  max-width: calc(100% - 360px);
+  max-width: calc(100% - 400px);
   height: 100%;
   color: #9295a2;
 }
@@ -99,6 +99,7 @@ body,
 }
 
 .titlebar-button svg { pointer-events: none; }
+.titlebar .titlebar-about { flex-shrink: 0; font-size: 12px; cursor: pointer; }
 .titlebar .titlebar-button:hover:not(:disabled) { background: #33353e; color: #fff; }
 .titlebar .titlebar-button:active:not(:disabled) { background: #424550; }
 .titlebar .titlebar-close:hover:not(:disabled) { background: #c42b1c; color: #fff; }
@@ -260,6 +261,29 @@ body,
 .unsaved-dialog::backdrop { background: #0009; }
 .unsaved-dialog p { overflow-wrap: anywhere; }
 .dialog-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* ---------- about ---------- */
+.about-dialog {
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 24px;
+  color: #ddd;
+  background: #23252d;
+  border: 1px solid #3a3b42;
+  border-radius: 10px;
+  box-shadow: 0 16px 48px #0006;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.about-dialog::backdrop { background: #0009; }
+.about-heading { display: flex; align-items: center; gap: 14px; }
+.about-logo { flex-shrink: 0; color: #8fa9e8; }
+.about-heading h2 { margin: 0; color: #eee; font-size: 18px; font-weight: 600; }
+.about-version { margin: 2px 0 0; color: #999daa; font-size: 12px; }
+.about-transports { display: flex; gap: 8px; padding: 0; margin: 16px 0; list-style: none; }
+.about-transports li { padding: 2px 10px; border: 1px solid #3a3b42; border-radius: 5px; color: #c4c6cf; }
+.about-features { margin-bottom: 22px; color: #999daa; font-size: 12px; }
+.about-dialog button:focus-visible { outline: 2px solid #8fa9e8; outline-offset: 3px; }
 
 /* ---------- footer / console ---------- */
 .app-footer {

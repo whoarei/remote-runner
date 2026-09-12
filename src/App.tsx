@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { onRunEvent } from "./api";
 import { useAppStore } from "./store";
 import { DeviceBar } from "./components/DeviceBar";
@@ -8,6 +8,7 @@ import { RunConsole } from "./components/RunConsole";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { UnsavedDialog } from "./components/UnsavedDialog";
 import { TitleBar } from "./components/TitleBar";
+import { AboutDialog } from "./components/AboutDialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@tauri-apps/api/core";
 import { dirtyDocument } from "./editorDocument";
@@ -18,6 +19,7 @@ const Editor = lazy(() => import("./components/Editor").then((module) => ({ defa
 export default function App() {
   const { loadDevices, handleRunEvent } = useAppStore();
   const [closeReady, setCloseReady] = useState(false);
+  const aboutDialog = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
     void loadDevices();
@@ -53,7 +55,8 @@ export default function App() {
   return (
     <div className="app">
       <UnsavedDialog />
-      <TitleBar closeReady={closeReady} />
+      <AboutDialog dialogRef={aboutDialog} />
+      <TitleBar closeReady={closeReady} onAbout={() => aboutDialog.current?.showModal()} />
       <header className="app-header">
         <DeviceBar />
       </header>

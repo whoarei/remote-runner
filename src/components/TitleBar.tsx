@@ -9,7 +9,7 @@ function reportWindowError(error: unknown) {
   useAppStore.setState({ editorError: `窗口操作失败：${errorMessage(error)}` });
 }
 
-export function TitleBar({ closeReady }: { closeReady: boolean }) {
+export function TitleBar({ closeReady, onAbout }: { closeReady: boolean; onAbout: () => void }) {
   const workspaceDir = useAppStore((state) => state.workspaceDir);
   const dirty = useAppStore(dirtyDocument);
   const [maximized, setMaximized] = useState(false);
@@ -59,6 +59,7 @@ export function TitleBar({ closeReady }: { closeReady: boolean }) {
           {dirty && <span className="titlebar-dirty" role="img" aria-label="有未保存的更改" />}
         </div>
       </div>
+      <button type="button" className="titlebar-button titlebar-about" title="关于 Remote Runner" aria-haspopup="dialog" onClick={onAbout}>关于</button>
       <div className="titlebar-controls" role="group" aria-label="窗口控制">
         <button type="button" className="titlebar-button" aria-label="最小化" title="最小化" disabled={!desktop} onClick={() => windowAction("minimize")}>
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M1 6.5h10" stroke="currentColor" /></svg>
