@@ -30,6 +30,40 @@ export async function installWithProgress(
   finally { unlisten(); }
 }
 
+/** 标题栏「更新」按钮的阶段；checking 仅用于一键流程的重新固定检查。 */
+export type UpdateButtonPhase =
+  | { kind: "checking" }
+  | { kind: "downloading"; downloaded: number; total: number | null }
+  | { kind: "verifying" }
+  | { kind: "installing" };
+
+/** 一键更新决策：受阻提示原因，便携版回退下载页，否则直接安装。 */
+export type DirectUpdateAction =
+  | { kind: "install" }
+  | { kind: "blocked"; reason: string }
+  | { kind: "manual"; url: string };
+
+export function directUpdateAction(info: AppUpdateInfo, blocker: string | null): DirectUpdateAction {
+  if (blocker) return { kind: "blocked", reason: blocker };
+  if (!info.can_auto_install) return { kind: "manual", url: info.download_url };
+  return { kind: "install" };
+}
+
+/** 标题栏按钮的紧凑进度文案。 */
+export function updateButtonLabel(phase: UpdateButtonPhase | null): string {
+  if (!phase) return "更新";
+  switch (phase.kind) {
+    case "checking": return "正在检查…";
+    case "downloading": {
+      if (phase.total === null || phase.total <= 0) return `下载中 ${formatBytes(phase.downloaded)}`;
+      const percent = Math.min(100, Math.floor((phase.downloaded / phase.total) * 100));
+      return `下载中 ${percent}%`;
+    }
+    case "verifying": return "验证签名…";
+    case "installing": return "正在安装…";
+  }
+}
+
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "0 B";
   const units = ["B", "KB", "MB", "GB"];

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { isTauri } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { productName, version as buildVersion } from "../../src-tauri/tauri.conf.json";
 import appIcon from "../../src-tauri/icons/128x128.png";
 import { api, errorMessage, type AppUpdateInfo } from "../api";
-import { formatDownloadProgress, installWithProgress, updateInstallBlocker, type UpdateProgress } from "../updateStatus";
+import { installCheckedUpdate } from "../updateFlow";
+import { formatDownloadProgress, updateInstallBlocker } from "../updateStatus";
 import { useAppStore } from "../store";
 import { useTerminalStore, terminalActive } from "../terminalStore";
 
@@ -58,22 +58,17 @@ function UpdateSection({ autoCheckNonce }: UpdateSectionProps) {
     const blocked = updateInstallBlocker(useAppStore.getState()) || (useTerminalStore.getState().tabs.some(terminalActive) ? "请先关闭活动终端，再安装更新。" : null);
     if (blocked) { setPhase({ kind: "error", message: blocked }); return; }
     busyRef.current = true;
-    useAppStore.setState({ updating: true });
-    setPhase({ kind: "downloading", info, downloaded: 0, total: null });
     try {
-      await installWithProgress(info.latest_version,
-        () => listen<UpdateProgress>("app-update://progress", ({ payload }) => {
-          if (!mounted.current) return;
-          if (payload.phase === "verifying" || payload.phase === "installing") setPhase({ kind: payload.phase });
-          else setPhase({ kind: "downloading", info, downloaded: payload.downloaded, total: payload.total });
-        }), api.installAppUpdate);
-      // On Windows a successful install command exits the process. Returning is unexpected.
-      throw new Error("安装程序未接管应用，请重试或手动下载更新");
+      await installCheckedUpdate(info, (phase) => {
+        if (!mounted.current) return;
+        if (phase.kind === "checking") return;
+        if (phase.kind === "downloading") setPhase({ kind: "downloading", info, downloaded: phase.downloaded, total: phase.total });
+        else setPhase({ kind: phase.kind });
+      });
     } catch (error) {
       if (mounted.current) setPhase({ kind: "error", message: `自动升级失败，可改用手动下载：${errorMessage(error)}` });
     } finally {
       busyRef.current = false;
-      useAppStore.setState({ updating: false });
     }
   }, []);
 

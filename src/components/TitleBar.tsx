@@ -4,6 +4,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { errorMessage } from "../api";
 import { dirtyDocument } from "../editorDocument";
 import { useAppStore } from "../store";
+import { startOneClickUpdate } from "../updateFlow";
+import { updateButtonLabel, type UpdateButtonPhase } from "../updateStatus";
 import { MenuBar } from "./MenuBar";
 import appIcon from "../../src-tauri/icons/64x64.png";
 
@@ -17,6 +19,7 @@ export function TitleBar({ closeReady, onAbout, onCheckUpdate }: { closeReady: b
   const dirty = useAppStore(dirtyDocument);
   const [maximized, setMaximized] = useState(false);
   const [focused, setFocused] = useState(true);
+  const [updatePhase, setUpdatePhase] = useState<UpdateButtonPhase | null>(null);
   const desktop = isTauri();
   const workspaceName = workspaceDir?.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || workspaceDir;
 
@@ -64,11 +67,12 @@ export function TitleBar({ closeReady, onAbout, onCheckUpdate }: { closeReady: b
           <button
             type="button"
             className="titlebar-button titlebar-update"
-            aria-label={`发现新版本 ${availableUpdate.latest_version}，点击查看更新`}
-            title={`发现新版本 ${availableUpdate.latest_version}，点击查看更新`}
-            onClick={onCheckUpdate}
+            disabled={!!updatePhase}
+            aria-label={`发现新版本 ${availableUpdate.latest_version}，点击下载并安装，应用将重启`}
+            title={`发现新版本 ${availableUpdate.latest_version}，点击下载并安装，应用将重启`}
+            onClick={() => void startOneClickUpdate(availableUpdate, setUpdatePhase)}
           >
-            更新
+            {updateButtonLabel(updatePhase)}
           </button>
         )}
         <button type="button" className="titlebar-button" aria-label="最小化" title="最小化" disabled={!desktop} onClick={() => windowAction("minimize")}>

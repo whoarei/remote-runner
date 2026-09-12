@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { checkForAvailableUpdate, formatBytes, formatDownloadProgress, installWithProgress, updateInstallBlocker } from "../src/updateStatus";
+import { checkForAvailableUpdate, directUpdateAction, formatBytes, formatDownloadProgress, installWithProgress, updateButtonLabel, updateInstallBlocker } from "../src/updateStatus";
 import type { AppUpdateInfo } from "../src/api";
 
 test("installation protects unsaved files and all active run phases", () => {
@@ -64,4 +64,26 @@ test("startup check surfaces only an available update", async () => {
 
 test("startup check swallows failures silently", async () => {
   await checkForAvailableUpdate(async () => { throw new Error("offline"); }, () => assert.fail("must not notify on failure"));
+});
+
+test("one-click update blocks with reason, falls back to download page, or installs", () => {
+  assert.deepEqual(directUpdateAction(sampleUpdate, "请先保存编辑器中的修改，再安装更新。"),
+    { kind: "blocked", reason: "请先保存编辑器中的修改，再安装更新。" });
+  assert.deepEqual(directUpdateAction({ ...sampleUpdate, can_auto_install: false }, null),
+    { kind: "manual", url: sampleUpdate.download_url });
+  assert.deepEqual(directUpdateAction(sampleUpdate, null), { kind: "install" });
+  // A blocker wins over the portable fallback so the reason is always explained.
+  assert.deepEqual(directUpdateAction({ ...sampleUpdate, can_auto_install: false }, "忙"),
+    { kind: "blocked", reason: "忙" });
+});
+
+test("updateButtonLabel renders each phase compactly", () => {
+  assert.equal(updateButtonLabel(null), "更新");
+  assert.equal(updateButtonLabel({ kind: "checking" }), "正在检查…");
+  assert.equal(updateButtonLabel({ kind: "downloading", downloaded: 512, total: 1024 }), "下载中 50%");
+  assert.equal(updateButtonLabel({ kind: "downloading", downloaded: 2048, total: 1024 }), "下载中 100%");
+  assert.equal(updateButtonLabel({ kind: "downloading", downloaded: 1024, total: null }), "下载中 1.0 KB");
+  assert.equal(updateButtonLabel({ kind: "downloading", downloaded: 1024, total: 0 }), "下载中 1.0 KB");
+  assert.equal(updateButtonLabel({ kind: "verifying" }), "验证签名…");
+  assert.equal(updateButtonLabel({ kind: "installing" }), "正在安装…");
 });
