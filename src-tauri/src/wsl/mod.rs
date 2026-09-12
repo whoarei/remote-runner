@@ -19,22 +19,8 @@ const HELPER: &str = include_str!("helper.py");
 const FRAME_LIMIT: usize = 128 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub enum Event {
-    State(&'static str),
-    Output { stream: OutputStream, data: Vec<u8> },
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum StopReason {
-    User,
-    Timeout,
-}
-
-pub struct Outcome {
-    pub code: Option<u32>,
-    pub stopped: Option<StopReason>,
-}
+use crate::process::RunState;
+pub use crate::process::{ExecutionEvent as Event, Outcome, StopReason};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -304,7 +290,7 @@ async fn execute_with_command(
         }
     };
     if req.workspace_dir.is_some() {
-        emit(Event::State("syncing"));
+        emit(Event::State(RunState::Syncing));
     }
     let prepare = async {
         // The helper already changes directory using its verified directory fd.
@@ -347,7 +333,7 @@ async fn execute_with_command(
             }
         }
     }
-    emit(Event::State("starting"));
+    emit(Event::State(RunState::Starting));
     bridge.send(json!({"type":"start"})).await?;
     let mut deadline = Some(tokio::time::Instant::now() + IO_TIMEOUT);
     let mut stopping = false;
@@ -372,7 +358,7 @@ async fn execute_with_command(
                 SessionControl::Interrupt | SessionControl::Terminate | SessionControl::Kill if !stopping => {
                     stopping = true;
                     deadline = Some(tokio::time::Instant::now() + Duration::from_secs(15));
-                    emit(Event::State("stopping"));
+                    emit(Event::State(RunState::Stopping));
                     bridge.send(json!({"type":"stop"})).await?;
                 }
                 _ => {}
@@ -384,7 +370,7 @@ async fn execute_with_command(
                     if !stopping {
                         // Also bound a broken helper when a run has a timeout.
                         deadline = if req.timeout_secs > 0 { Some(tokio::time::Instant::now() + Duration::from_secs(req.timeout_secs + 15)) } else { None };
-                        emit(Event::State("running"));
+                        emit(Event::State(RunState::Running));
                     }
                 }
                 Message::Output { stream, data } => {

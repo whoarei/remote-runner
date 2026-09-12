@@ -238,14 +238,14 @@ async fn full_workspace_run_hides_setup_and_echo_and_preserves_exit_code() {
         )],
         &mut rx,
         |event| match event {
-            serial::Event::Output(data) => output.lock().unwrap().extend(data),
-            serial::Event::State(state) => states.lock().unwrap().push(state),
+            serial::Event::Output { data, .. } => output.lock().unwrap().extend(data),
+            serial::Event::State(state) => states.lock().unwrap().push(state.as_str()),
         },
     )
     .await
     .unwrap();
     fake.await.unwrap();
-    assert_eq!(result.code, 7);
+    assert_eq!(result.code, Some(7));
     assert_eq!(result.stopped, None);
     assert_eq!(*output.lock().unwrap(), b"script output");
     assert_eq!(
@@ -425,7 +425,7 @@ async fn user_stop_is_forwarded_as_ctrl_c() {
             &mut rx,
             |_| {},
             |state| {
-                if state == "running" {
+                if state == crate::process::RunState::Running {
                     tx.send(SessionControl::Interrupt).unwrap();
                 }
             },
@@ -629,7 +629,7 @@ async fn continuous_output_does_not_starve_stop_writes() {
             &mut rx,
             |_| {},
             |state| {
-                if state == "running" {
+                if state == crate::process::RunState::Running {
                     tx.send(SessionControl::Interrupt).unwrap();
                 }
             },

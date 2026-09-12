@@ -376,7 +376,7 @@ async fn run_manager_records_wsl_output_and_history_without_ssh() {
         .await
         .unwrap()
         .contains("Python"));
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = crate::events::channel();
     let manager = RunManager::new(&root, tx);
     let id = manager
         .start(
@@ -387,11 +387,11 @@ async fn run_manager_records_wsl_output_and_history_without_ssh() {
         .unwrap();
     let mut output = Vec::new();
     tokio::time::timeout(Duration::from_secs(20), async {
-        while let Some(event) = rx.recv().await {
+        while let Ok(event) = rx.recv().await {
             match event {
                 RunEvent::Output { data, .. } => output.extend(STANDARD.decode(data).unwrap()),
                 RunEvent::Status { status } if status.ended_at.is_some() => {
-                    assert_eq!(status.state, "exited", "{:?}", status.error);
+                    assert_eq!(status.state, RunState::Exited, "{:?}", status.error);
                     assert_eq!(status.exit_code, Some(3));
                     break;
                 }
@@ -404,7 +404,7 @@ async fn run_manager_records_wsl_output_and_history_without_ssh() {
     assert_eq!(output, b"WSL_DIRECT_OK");
     assert_eq!(manager.history()[0].run_id, id);
     assert!(manager.list_running().is_empty());
-    let (tx, _) = mpsc::unbounded_channel();
+    let (tx, _) = crate::events::channel();
     assert_eq!(RunManager::new(&root, tx).history()[0].run_id, id);
     std::fs::remove_dir_all(root).unwrap();
 }

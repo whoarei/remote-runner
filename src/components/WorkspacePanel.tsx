@@ -1,5 +1,6 @@
 import { useAppStore } from "../store";
 import { PanelTitle } from "./PanelTitle";
+import { useShallow } from "zustand/react/shallow";
 
 export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boolean; onToggleCollapse: () => void }) {
   const {
@@ -10,7 +11,8 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
     saving,
     starting,
     guarding,
-  } = useAppStore();
+  } = useAppStore(useShallow((s) => ({ workspaceDir: s.workspaceDir, workspaceFiles: s.workspaceFiles,
+    openFile: s.openFile, openWorkspaceFile: s.openWorkspaceFile, saving: s.saving, starting: s.starting, guarding: s.guarding })));
 
   return (
     <div className="workspace-panel">

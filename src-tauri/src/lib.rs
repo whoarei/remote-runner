@@ -1,16 +1,18 @@
 pub mod commands;
 pub mod device;
 pub mod error;
+pub mod events;
 pub mod process;
 pub mod runner;
 pub mod serial;
 pub mod ssh;
 pub mod workspace;
+pub mod workspace_upload;
 pub mod wsl;
 
 use commands::AppState;
 use device::DeviceStore;
-use runner::{RunEvent, RunManager};
+use runner::RunManager;
 use tauri::Manager;
 
 pub fn run() {
@@ -30,25 +32,15 @@ pub fn run() {
             std::fs::create_dir_all(&config_dir).ok();
             tracing::info!("config dir: {}", config_dir.display());
 
-            let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<RunEvent>();
+            let (event_tx, event_rx) = events::channel();
 
             let state = AppState {
                 run_manager: RunManager::new(&config_dir, event_tx),
                 device_store: DeviceStore::new(&config_dir),
                 config_dir,
+                event_rx: parking_lot::Mutex::new(event_rx),
             };
             app.manage(state);
-
-            // RunEvent → Tauri event 转发
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                use tauri::Emitter;
-                while let Some(ev) = event_rx.recv().await {
-                    if let Err(e) = handle.emit("run-event", &ev) {
-                        tracing::warn!("emit run-event failed: {e}");
-                    }
-                }
-            });
 
             Ok(())
         })
@@ -69,6 +61,7 @@ pub fn run() {
             commands::get_run_status,
             commands::list_running_runs,
             commands::get_run_history,
+            commands::drain_run_events,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

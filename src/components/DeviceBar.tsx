@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { api, DeviceProfile } from "../api";
 import { useAppStore } from "../store";
 
@@ -16,7 +17,9 @@ const emptyDevice = (): DeviceProfile => ({
 });
 
 export function DeviceBar() {
-  const { devices, selectedDeviceId, selectDevice, loadDevices } = useAppStore();
+  const { devices, selectedDeviceId, selectDevice, loadDevices } = useAppStore(useShallow((s) => ({
+    devices: s.devices, selectedDeviceId: s.selectedDeviceId, selectDevice: s.selectDevice, loadDevices: s.loadDevices,
+  })));
   const [editing, setEditing] = useState<DeviceProfile | null>(null);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [ports, setPorts] = useState<string[]>([]);

@@ -5,6 +5,8 @@ import "@xterm/xterm/css/xterm.css";
 import { api } from "../api";
 import { useAppStore } from "../store";
 import { PanelTitle } from "./PanelTitle";
+import { useShallow } from "zustand/react/shallow";
+import { createConsoleReplay } from "../consoleReplay";
 
 /**
  * Run Console：绑定的是“远程进程”的 stdin/stdout/stderr，不是 SSH shell。
@@ -14,11 +16,12 @@ export function RunConsole({ collapsed, onToggleCollapse }: { collapsed: boolean
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
-  /** 每个 run 已写入的字节数 */
-  const writtenRef = useRef<Record<string, number>>({});
-  const lastRunRef = useRef<string | null>(null);
+  const replayRef = useRef<ReturnType<typeof createConsoleReplay> | null>(null);
 
-  const { activeRunId, consoleSeq, outputBuffers, runs } = useAppStore();
+  const { activeRunId, buffer, activeRun } = useAppStore(useShallow((s) => ({
+    activeRunId: s.activeRunId, buffer: s.activeRunId ? s.outputBuffers[s.activeRunId] : undefined,
+    activeRun: s.activeRunId ? s.runs[s.activeRunId] : undefined,
+  })));
 
   // 初始化 xterm
   useEffect(() => {
@@ -62,6 +65,13 @@ export function RunConsole({ collapsed, onToggleCollapse }: { collapsed: boolean
 
     termRef.current = term;
     fitRef.current = fit;
+    const replay = createConsoleReplay(term, () => {
+      const s = useAppStore.getState();
+      return { runId: s.activeRunId, buffer: s.activeRunId ? s.outputBuffers[s.activeRunId] : undefined,
+        status: s.activeRunId ? s.runs[s.activeRunId] : undefined };
+    });
+    replayRef.current = replay;
+    replay.pump();
 
     const observer = new ResizeObserver(() => {
       fit.fit();
@@ -75,52 +85,17 @@ export function RunConsole({ collapsed, onToggleCollapse }: { collapsed: boolean
     return () => {
       observer.disconnect();
       input.dispose();
+      replay.dispose();
+      replayRef.current = null;
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
-      writtenRef.current = {};
-      lastRunRef.current = null;
     };
   }, []);
 
-  // 输出写入 / 切换 run 时重放缓冲
-  useEffect(() => {
-    const term = termRef.current;
-    if (!term) return;
-
-    if (activeRunId !== lastRunRef.current) {
-      term.reset();
-      writtenRef.current = {};
-      lastRunRef.current = activeRunId;
-      if (activeRunId) {
-        const status = useAppStore.getState().runs[activeRunId];
-        if (status) {
-          term.writeln(`\x1b[90m▶ ${status.label}  @ ${status.device_name}\x1b[0m`);
-        }
-      }
-    }
-
-    if (!activeRunId) return;
-    const buffer = outputBuffers[activeRunId];
-    if (!buffer) return;
-    const { chunks, start } = buffer;
-    let written = writtenRef.current[activeRunId] ?? 0;
-    if (written < start) {
-      term.reset();
-      term.writeln("[较早的输出已超过缓冲上限，仅保留最近 2 MiB / 4096 个数据块]");
-      written = start;
-    }
-    if (start + chunks.length > written) {
-      for (let i = written - start; i < chunks.length; i++) {
-        term.write(chunks[i]);
-      }
-      writtenRef.current[activeRunId] = start + chunks.length;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRunId, consoleSeq]);
+  useEffect(() => { replayRef.current?.pump(); }, [activeRunId, buffer]);
 
   // 状态行
-  const activeRun = activeRunId ? runs[activeRunId] : null;
 
   useEffect(() => {
     const term = termRef.current;

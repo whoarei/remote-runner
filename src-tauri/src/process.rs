@@ -3,6 +3,74 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+pub enum RunState {
+    Preparing,
+    Syncing,
+    Starting,
+    Running,
+    Stopping,
+    Exited,
+    Failed,
+    Canceled,
+}
+
+impl RunState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Preparing => "preparing",
+            Self::Syncing => "syncing",
+            Self::Starting => "starting",
+            Self::Running => "running",
+            Self::Stopping => "stopping",
+            Self::Exited => "exited",
+            Self::Failed => "failed",
+            Self::Canceled => "canceled",
+        }
+    }
+    pub const fn is_active(self) -> bool {
+        matches!(
+            self,
+            Self::Preparing | Self::Syncing | Self::Starting | Self::Running | Self::Stopping
+        )
+    }
+    pub const fn blocks_workspace_save(self) -> bool {
+        matches!(self, Self::Preparing | Self::Syncing | Self::Stopping)
+    }
+}
+
+impl std::fmt::Display for RunState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum StopReason {
+    User,
+    Timeout,
+}
+
+#[derive(Debug)]
+pub struct Outcome {
+    pub code: Option<u32>,
+    pub stopped: Option<StopReason>,
+}
+
+/// Transport-independent progress contract consumed by RunManager.
+pub enum ExecutionEvent {
+    State(RunState),
+    Output { stream: OutputStream, data: Vec<u8> },
+}
+
+#[derive(Clone, Copy)]
+pub struct Capabilities {
+    pub pipe: bool,
+    pub resize: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ConsoleMode {
     Pty,
     Pipe,

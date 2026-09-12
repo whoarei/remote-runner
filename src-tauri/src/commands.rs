@@ -8,6 +8,12 @@ pub struct AppState {
     pub run_manager: RunManager,
     pub device_store: DeviceStore,
     pub config_dir: PathBuf,
+    pub event_rx: parking_lot::Mutex<tokio::sync::broadcast::Receiver<crate::runner::RunEvent>>,
+}
+
+#[tauri::command]
+pub fn drain_run_events(state: tauri::State<'_, AppState>) -> Vec<crate::runner::RunEvent> {
+    crate::events::drain(&mut state.event_rx.lock(), &state.run_manager)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -125,7 +131,7 @@ pub fn write_workspace_file(
         .run_manager
         .list_running()
         .iter()
-        .any(|run| matches!(run.state.as_str(), "preparing" | "syncing" | "stopping"))
+        .any(|run| run.state.blocks_workspace_save())
     {
         return Err(crate::workspace::FileError::new(
             "busy",

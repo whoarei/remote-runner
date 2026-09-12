@@ -6,16 +6,22 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StopReason {
-    User,
-    Timeout,
-}
+use crate::process::RunState;
+pub use crate::process::StopReason;
 
 #[derive(Debug)]
 pub struct CommandResult {
     pub code: u32,
     pub stopped: Option<StopReason>,
+}
+
+impl From<CommandResult> for crate::process::Outcome {
+    fn from(result: CommandResult) -> Self {
+        Self {
+            code: Some(result.code),
+            stopped: result.stopped,
+        }
+    }
 }
 
 pub struct ShellSession<T> {
@@ -42,7 +48,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> ShellSession<T> {
         timeout: Option<Duration>,
         controls: &mut mpsc::UnboundedReceiver<SessionControl>,
         mut output: impl FnMut(Vec<u8>),
-        mut state: impl FnMut(&'static str),
+        mut state: impl FnMut(RunState),
     ) -> Result<CommandResult> {
         let nonce = uuid::Uuid::new_v4().simple().to_string();
         let mut pending = wrap(command, &nonce, dimensions).into_bytes();
@@ -86,7 +92,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> ShellSession<T> {
                         Some(SessionControl::Interrupt | SessionControl::Terminate | SessionControl::Kill) | None => {
                             if control.is_none() { controls_open = false; }
                             if stopped.is_none() {
-                                state("stopping");
+                                state(RunState::Stopping);
                                 stopped = Some(StopReason::User);
                                 if !transmitted_any {
                                     return Ok(CommandResult { code: 130, stopped });
@@ -113,7 +119,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> ShellSession<T> {
                         return Err(RunnerError::Serial("no shell response before the transmission/start deadline; check baud rate and ensure the serial console is already logged into a Linux shell; remote state is unknown".into()));
                     }
                     stopped = Some(StopReason::Timeout);
-                    state("stopping");
+                    state(RunState::Stopping);
                     queued_input.clear();
                     pending = vec![3]; offset = 0;
                     deadline = Some(Instant::now() + Duration::from_secs(5));
@@ -132,7 +138,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> ShellSession<T> {
                     let was_started = parser.started;
                     let data = parser.push(&read_buf[..n])?;
                     if !was_started && parser.started {
-                        if stopped.is_none() { state("running"); }
+                        if stopped.is_none() { state(RunState::Running); }
                         if stopped.is_none() { deadline = timeout.map(|d| Instant::now() + d); }
                         if stopped.is_none() && submitted && !queued_input.is_empty() {
                             pending.extend(std::mem::take(&mut queued_input));

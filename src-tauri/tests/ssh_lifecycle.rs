@@ -1,4 +1,5 @@
 use remote_runner::device::{AuthMethod, DeviceProfile};
+use remote_runner::process::RunState;
 use remote_runner::runner::{RunEvent, RunManager, RunRequest, RunStatus};
 use russh::{server, Channel, ChannelId};
 use std::sync::Arc;
@@ -61,7 +62,17 @@ impl server::Handler for TestServer {
             session.data(channel, b"early".to_vec())?;
         }
         session.channel_success(channel)?;
-        let command = String::from_utf8_lossy(data);
+        let wire = String::from_utf8_lossy(data);
+        use base64::Engine;
+        let decoded = wire
+            .split("echo ")
+            .nth(1)
+            .and_then(|s| s.split_whitespace().next())
+            .and_then(|s| base64::engine::general_purpose::STANDARD.decode(s).ok());
+        let command = decoded
+            .as_deref()
+            .map(String::from_utf8_lossy)
+            .unwrap_or(wire);
         let Some(prefix) = command
             .split("printf '")
             .nth(1)
@@ -126,7 +137,7 @@ async fn run_case(behavior: Behavior, timeout: u64) -> (RunStatus, Vec<u8>) {
         },
         workspace_root: "/tmp/test".into(),
     };
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, mut rx) = remote_runner::events::channel();
     let manager = RunManager::new(&root, tx);
     let request: RunRequest = serde_json::from_value(serde_json::json!({
         "device_id": "test", "kind": "command", "command": "test",
@@ -163,18 +174,24 @@ async fn run_case(behavior: Behavior, timeout: u64) -> (RunStatus, Vec<u8>) {
 
 #[tokio::test]
 async fn rejected_exec_fails_run() {
-    assert_eq!(run_case(Behavior::RejectExec, 0).await.0.state, "failed");
+    assert_eq!(
+        run_case(Behavior::RejectExec, 0).await.0.state,
+        RunState::Failed
+    );
 }
 
 #[tokio::test]
 async fn rejected_pty_fails_run() {
-    assert_eq!(run_case(Behavior::RejectPty, 0).await.0.state, "failed");
+    assert_eq!(
+        run_case(Behavior::RejectPty, 0).await.0.state,
+        RunState::Failed
+    );
 }
 
 #[tokio::test]
 async fn eof_before_exit_status_preserves_exit_code_and_short_output() {
     let (status, output) = run_case(Behavior::DelayedExit, 0).await;
-    assert_eq!(status.state, "exited");
+    assert_eq!(status.state, RunState::Exited);
     assert_eq!(status.exit_code, Some(7));
     assert_eq!(output, b"earlyhello");
 }
@@ -182,7 +199,7 @@ async fn eof_before_exit_status_preserves_exit_code_and_short_output() {
 #[tokio::test]
 async fn closed_channel_without_exit_is_a_failure() {
     let (status, output) = run_case(Behavior::CloseWithoutExit, 0).await;
-    assert_eq!(status.state, "failed");
+    assert_eq!(status.state, RunState::Failed);
     assert!(status.error.unwrap().contains("without an exit status"));
     assert_eq!(output, b"hello");
 }
@@ -190,6 +207,6 @@ async fn closed_channel_without_exit_is_a_failure() {
 #[tokio::test]
 async fn timeout_escalates_and_finishes() {
     let (status, _) = run_case(Behavior::Hang, 1).await;
-    assert_eq!(status.state, "failed");
+    assert_eq!(status.state, RunState::Failed);
     assert_eq!(status.error.as_deref(), Some("timeout after 1s"));
 }

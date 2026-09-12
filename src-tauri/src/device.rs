@@ -11,6 +11,15 @@ pub enum TransportKind {
     Wsl,
 }
 
+impl TransportKind {
+    pub fn capabilities(self) -> crate::process::Capabilities {
+        crate::process::Capabilities {
+            pipe: self != Self::Serial,
+            resize: self != Self::Serial,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WslConfig {
     pub distribution: String,

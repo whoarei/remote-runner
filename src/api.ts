@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 
 export type AuthMethod =
   | { type: "password"; password: string }
@@ -48,7 +47,8 @@ export interface RunStatus {
 
 export type RunEvent =
   | { type: "output"; run_id: string; stream: string; data: string }
-  | { type: "status"; status: RunStatus };
+  | { type: "status"; status: RunStatus }
+  | { type: "resync"; statuses: RunStatus[] };
 
 export interface WorkspaceEntry {
   name: string;
@@ -103,10 +103,27 @@ export const api = {
     invoke<RunStatus | null>("get_run_status", { runId }),
   listRunningRuns: () => invoke<RunStatus[]>("list_running_runs"),
   getRunHistory: () => invoke<RunStatus[]>("get_run_history"),
+  drainRunEvents: () => invoke<RunEvent[]>("drain_run_events"),
 };
 
-export function onRunEvent(cb: (ev: RunEvent) => void) {
-  return listen<RunEvent>("run-event", (e) => cb(e.payload));
+// One bounded IPC response at a time: a slow/hidden WebView cannot accumulate
+// unbounded native event deliveries. StrictMode cleanup waits for an in-flight
+// response to be consumed before the next subscriber starts draining.
+let drainInFlight: Promise<void> = Promise.resolve();
+export function onRunEvents(cb: (events: RunEvent[]) => void, onError: (error: unknown) => void) {
+  let disposed = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const poll = () => {
+    drainInFlight = drainInFlight.then(async () => {
+      if (disposed) return;
+      try { cb(await api.drainRunEvents()); }
+      catch (error) { if (!disposed) onError(error); }
+    }).finally(() => {
+      if (!disposed) timer = setTimeout(poll, 33);
+    });
+  };
+  poll();
+  return () => { disposed = true; clearTimeout(timer); };
 }
 
 export function base64ToBytes(b64: string): Uint8Array {

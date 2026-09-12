@@ -8,18 +8,16 @@ pub mod transport;
 use crate::device::DeviceProfile;
 use crate::error::{Result, RunnerError};
 use crate::process::SessionControl;
+use crate::process::{Outcome, OutputStream, RunState};
 use crate::runner::{build_script, sh_quote, RunRequest, ScriptKind};
-use session::{CommandResult, ShellSession};
+use session::ShellSession;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 
 pub use session::StopReason;
 
-pub enum Event {
-    State(&'static str),
-    Output(Vec<u8>),
-}
+pub use crate::process::ExecutionEvent as Event;
 
 /// Validate every generated line before opening the port or creating remote files.
 pub fn preflight(req: &RunRequest, remote: &str, files: &[filesync::UploadEntry]) -> Result<()> {
@@ -86,7 +84,7 @@ pub async fn execute<T: AsyncRead + AsyncWrite + Unpin>(
     files: Vec<filesync::UploadEntry>,
     controls: &mut mpsc::UnboundedReceiver<SessionControl>,
     events: impl Fn(Event),
-) -> Result<CommandResult> {
+) -> Result<Outcome> {
     preflight(req, remote, &files)?;
     let mut session = ShellSession::new(io, baud_rate);
     let runtime_probe = match &req.kind {
@@ -113,7 +111,7 @@ pub async fn execute<T: AsyncRead + AsyncWrite + Unpin>(
         ));
     }
     if probe.stopped.is_some() {
-        return Ok(probe);
+        return Ok(probe.into());
     }
     if probe.code != 0 {
         return Err(RunnerError::Serial(
@@ -122,7 +120,7 @@ pub async fn execute<T: AsyncRead + AsyncWrite + Unpin>(
     }
 
     if req.workspace_dir.is_some() {
-        events(Event::State("syncing"));
+        events(Event::State(RunState::Syncing));
         let mkdir = session
             .execute(
                 &format!("mkdir -p {}", sh_quote(remote)),
@@ -139,7 +137,7 @@ pub async fn execute<T: AsyncRead + AsyncWrite + Unpin>(
             ));
         }
         if mkdir.stopped.is_some() {
-            return Ok(mkdir);
+            return Ok(mkdir.into());
         }
         if mkdir.code != 0 {
             return Err(RunnerError::Serial("cannot create remote workspace".into()));
@@ -163,7 +161,7 @@ pub async fn execute<T: AsyncRead + AsyncWrite + Unpin>(
                     )));
                 }
                 if result.stopped.is_some() {
-                    return Ok(result);
+                    return Ok(result.into());
                 }
                 if result.code != 0 {
                     return Err(RunnerError::Serial(format!(
@@ -174,7 +172,7 @@ pub async fn execute<T: AsyncRead + AsyncWrite + Unpin>(
             }
         }
     }
-    events(Event::State("starting"));
+    events(Event::State(RunState::Starting));
     let command = build_script(req, remote);
     session
         .execute(
@@ -182,8 +180,14 @@ pub async fn execute<T: AsyncRead + AsyncWrite + Unpin>(
             Some((req.cols, req.rows)),
             (req.timeout_secs > 0).then(|| Duration::from_secs(req.timeout_secs)),
             controls,
-            |data| events(Event::Output(data)),
+            |data| {
+                events(Event::Output {
+                    stream: OutputStream::Stdout,
+                    data,
+                })
+            },
             |state| events(Event::State(state)),
         )
         .await
+        .map(Into::into)
 }

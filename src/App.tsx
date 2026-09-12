@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { onRunEvent } from "./api";
+import { onRunEvents } from "./api";
 import { useAppStore } from "./store";
 import { DeviceBar } from "./components/DeviceBar";
 import { WorkspacePanel } from "./components/WorkspacePanel";
@@ -19,17 +19,18 @@ import { clampSidebarWidth, clampConsoleHeight, clampSideSplit, DEFAULT_LAYOUT }
 const Editor = lazy(() => import("./components/Editor").then((module) => ({ default: module.Editor })));
 
 export default function App() {
-  const { loadDevices, handleRunEvent } = useAppStore();
+  const loadDevices = useAppStore((s) => s.loadDevices);
+  const loadRuns = useAppStore((s) => s.loadRuns);
+  const handleRunEvents = useAppStore((s) => s.handleRunEvents);
   const [closeReady, setCloseReady] = useState(false);
   const aboutDialog = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
-    void loadDevices();
-    const unlisten = onRunEvent(handleRunEvent);
-    return () => {
-      unlisten.then((f) => f());
-    };
-  }, [loadDevices, handleRunEvent]);
+    const report = (error: unknown) => useAppStore.setState({ editorError: errorMessage(error) });
+    void loadDevices().catch(report);
+    void loadRuns().catch(report);
+    return onRunEvents(handleRunEvents, report);
+  }, [loadDevices, loadRuns, handleRunEvents]);
 
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {

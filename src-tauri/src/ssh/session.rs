@@ -27,7 +27,7 @@ impl Drop for ProcessSession {
 pub async fn spawn(
     conn: &SshConnection,
     spec: SpawnSpec,
-    event_tx: mpsc::UnboundedSender<SessionEvent>,
+    event_tx: mpsc::Sender<SessionEvent>,
 ) -> Result<ProcessSession> {
     let mut channel = tokio::time::timeout(
         std::time::Duration::from_secs(10),
@@ -61,34 +61,34 @@ pub async fn spawn(
                     tracing::debug!("channel msg: {:?}", msg.as_ref().map(|m| std::mem::discriminant(m)));
                     match msg {
                         None => {
-                            let _ = event_tx.send(SessionEvent::Closed);
+                            let _ = event_tx.send(SessionEvent::Closed).await;
                             break;
                         }
                         Some(ChannelMsg::Data { data }) => {
                             let _ = event_tx.send(SessionEvent::Output {
                                 stream: OutputStream::Stdout,
                                 data: data.to_vec(),
-                            });
+                            }).await;
                         }
                         Some(ChannelMsg::ExtendedData { data, ext }) => {
                             // ext == 1 为 stderr（pipe 模式下）
                             let stream = if ext == 1 { OutputStream::Stderr } else { OutputStream::Stdout };
-                            let _ = event_tx.send(SessionEvent::Output { stream, data: data.to_vec() });
+                            let _ = event_tx.send(SessionEvent::Output { stream, data: data.to_vec() }).await;
                         }
                         Some(ChannelMsg::ExitStatus { exit_status }) => {
-                            let _ = event_tx.send(SessionEvent::Exit { code: Some(exit_status) });
+                            let _ = event_tx.send(SessionEvent::Exit { code: Some(exit_status) }).await;
                         }
                         Some(ChannelMsg::ExitSignal { .. }) => {
-                            let _ = event_tx.send(SessionEvent::Exit { code: None });
+                            let _ = event_tx.send(SessionEvent::Exit { code: None }).await;
                         }
                         // EOF only ends output; exit-status can arrive afterwards.
                         Some(ChannelMsg::Eof) => {}
                         Some(ChannelMsg::Failure) => {
-                            let _ = event_tx.send(SessionEvent::Failed { error: "SSH request rejected".into() });
+                            let _ = event_tx.send(SessionEvent::Failed { error: "SSH request rejected".into() }).await;
                             break;
                         }
                         Some(ChannelMsg::Close) => {
-                            let _ = event_tx.send(SessionEvent::Closed);
+                            let _ = event_tx.send(SessionEvent::Closed).await;
                             break;
                         }
                         _ => {}
@@ -161,7 +161,23 @@ async fn await_success(
                         "SSH process request rejected or channel closed".into(),
                     ))
                 }
-                Some(message) => pending.push_back(message),
+                Some(message) => {
+                    let bytes: usize = pending
+                        .iter()
+                        .map(|m| match m {
+                            ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } => {
+                                data.len()
+                            }
+                            _ => 0,
+                        })
+                        .sum();
+                    if pending.len() >= 64 || bytes >= 1024 * 1024 {
+                        return Err(crate::error::RunnerError::Ssh(
+                            "too much output before SSH request acknowledgement".into(),
+                        ));
+                    }
+                    pending.push_back(message);
+                }
             }
         }
     })

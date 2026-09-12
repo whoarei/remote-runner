@@ -77,7 +77,7 @@ async fn main() {
             workspace_root: "/tmp/devrunner/workspaces".to_string(),
         };
 
-        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<RunEvent>();
+        let (event_tx, mut event_rx) = remote_runner::events::channel();
         let manager = RunManager::new(&config_dir, event_tx);
 
         let request = if interact {
@@ -130,8 +130,9 @@ async fn main() {
         }
 
         let mut final_state = String::new();
-        while let Some(ev) = event_rx.recv().await {
+        while let Some(ev) = next_event(&mut event_rx, &manager, &run_id).await {
             match ev {
+                RunEvent::Resync { .. } => unreachable!("CLI recovers directly"),
                 RunEvent::Output { data, .. } => {
                     print!("{}", String::from_utf8_lossy(&base64_decode(&data)));
                 }
@@ -141,7 +142,7 @@ async fn main() {
                         status.state, status.exit_code, status.error
                     );
                     if matches!(status.state.as_str(), "exited" | "failed" | "canceled") {
-                        final_state = status.state.clone();
+                        final_state = status.state.to_string();
                         break;
                     }
                 }
@@ -217,7 +218,7 @@ async fn main() {
         workspace_root: "/tmp/devrunner/workspaces".to_string(),
     };
 
-    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<RunEvent>();
+    let (event_tx, mut event_rx) = remote_runner::events::channel();
     let manager = RunManager::new(&config_dir, event_tx);
 
     let run_id = manager
@@ -242,8 +243,9 @@ async fn main() {
     eprintln!("[rr-cli] run_id = {run_id}");
 
     let mut exit_code: Option<u32> = None;
-    while let Some(ev) = event_rx.recv().await {
+    while let Some(ev) = next_event(&mut event_rx, &manager, &run_id).await {
         match ev {
+            RunEvent::Resync { .. } => unreachable!("CLI recovers directly"),
             RunEvent::Output { stream, data, .. } => {
                 let bytes = base64_decode(&data);
                 let text = String::from_utf8_lossy(&bytes);
@@ -281,4 +283,24 @@ fn base64_decode(s: &str) -> Vec<u8> {
     base64::engine::general_purpose::STANDARD
         .decode(s)
         .unwrap_or_default()
+}
+
+async fn next_event(
+    rx: &mut tokio::sync::broadcast::Receiver<RunEvent>,
+    manager: &RunManager,
+    id: &str,
+) -> Option<RunEvent> {
+    loop {
+        match rx.recv().await {
+            Ok(event) => return Some(event),
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
+                eprintln!("[rr-cli] output truncated: {count} events skipped");
+                *rx = manager.subscribe_events();
+                if let Some(status) = manager.status(id) {
+                    return Some(RunEvent::Status { status });
+                }
+            }
+        }
+    }
 }

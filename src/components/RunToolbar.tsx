@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { api, inferKind, RunRequest, ScriptKind } from "../api";
 import { useAppStore } from "../store";
 import { dirtyDocument } from "../editorDocument";
+import { isActiveRun } from "../runState";
 
 export function RunToolbar() {
   const {
@@ -12,14 +14,12 @@ export function RunToolbar() {
     openFile,
     activeRunId,
     runs,
-  } = useAppStore();
+  } = useAppStore(useShallow((s) => ({ selectedDeviceId: s.selectedDeviceId, devices: s.devices,
+    workspaceDir: s.workspaceDir, workspaceFiles: s.workspaceFiles, openFile: s.openFile,
+    activeRunId: s.activeRunId, runs: s.runs })));
 
-  const [mode, setMode] = useState<"script" | "command">("script");
-  const [entry, setEntry] = useState<string>("");
-  const [argsText, setArgsText] = useState("");
-  const [command, setCommand] = useState("");
-  const [consoleMode, setConsoleMode] = useState<"pty" | "pipe">("pty");
-  const [timeoutSecs, setTimeoutSecs] = useState(0);
+  const { mode, entry, argsText, command, consoleMode, timeoutSecs } = useAppStore((s) => s.runDraft);
+  const setDraft = useAppStore((s) => s.setRunDraft);
   const [busy, setBusy] = useState(false);
   const dirty = useAppStore(dirtyDocument);
   const editorBusy = useAppStore((s) => s.loading || s.saving || s.starting || s.guarding);
@@ -31,7 +31,6 @@ export function RunToolbar() {
     activeRun &&
     ["preparing", "syncing", "starting", "running", "stopping"].includes(activeRun.state);
 
-  useEffect(() => { setEntry(""); }, [workspaceDir]);
 
   const effectiveEntry = entry || openFile || "";
 
@@ -94,13 +93,18 @@ export function RunToolbar() {
 
   return (
     <div className="run-toolbar">
-      <select value={mode} onChange={(e) => setMode(e.target.value as never)}>
+      {Object.values(runs).some(isActiveRun) && <select aria-label="选择运行中的任务" value={activeRun && isActiveRun(activeRun) ? activeRunId! : ""}
+        onChange={(e) => { if (e.target.value) useAppStore.getState().setActiveRun(e.target.value); }}>
+        <option value="">运行中的任务…</option>
+        {Object.values(runs).filter(isActiveRun).map((r) => <option key={r.run_id} value={r.run_id}>{r.label} @ {r.device_name}</option>)}
+      </select>}
+      <select value={mode} onChange={(e) => setDraft({ mode: e.target.value as "script" | "command" })}>
         <option value="script">脚本</option>
         <option value="command">命令</option>
       </select>
 
       {mode === "script" ? (
-        <select value={effectiveEntry} onChange={(e) => setEntry(e.target.value)}>
+        <select value={effectiveEntry} onChange={(e) => setDraft({ entry: e.target.value })}>
           <option value="">选择入口脚本…</option>
           {scriptFiles.map((f) => (
             <option key={f.name} value={f.name}>
@@ -113,7 +117,7 @@ export function RunToolbar() {
           className="command-input"
           placeholder="输入远程命令，如：cat /proc/cpuinfo | head -5"
           value={command}
-          onChange={(e) => setCommand(e.target.value)}
+          onChange={(e) => setDraft({ command: e.target.value })}
         />
       )}
 
@@ -122,7 +126,7 @@ export function RunToolbar() {
           className="args-input"
           placeholder="参数（空格分隔）"
           value={argsText}
-          onChange={(e) => setArgsText(e.target.value)}
+          onChange={(e) => setDraft({ argsText: e.target.value })}
         />
       )}
 
@@ -130,7 +134,7 @@ export function RunToolbar() {
         value={effectiveConsoleMode}
         disabled={isSerial}
         title={isSerial ? "串口：合并输出，仅启动时设置行列数" : "console 模式：pty 支持交互/TUI；pipe 分离 stdout/stderr"}
-        onChange={(e) => setConsoleMode(e.target.value as never)}
+        onChange={(e) => setDraft({ consoleMode: e.target.value as "pty" | "pipe" })}
       >
         <option value="pty">{isSerial ? "串口 Console" : "pty"}</option>
         {!isSerial && <option value="pipe">pipe</option>}
@@ -142,7 +146,7 @@ export function RunToolbar() {
         min={0}
         title="超时（秒），0 = 不限"
         value={timeoutSecs}
-        onChange={(e) => setTimeoutSecs(Number(e.target.value) || 0)}
+        onChange={(e) => setDraft({ timeoutSecs: Number(e.target.value) || 0 })}
       />
 
       {running ? (

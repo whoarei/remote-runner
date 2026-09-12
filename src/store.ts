@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import { api, DeviceProfile, RunEvent, RunStatus, WorkspaceEntry, RunRequest, errorMessage } from "./api";
 import { ChangeChoice, dirtyDocument, EditorLanguage, inferLanguage, uploadBusy } from "./editorDocument";
-import { appendOutput, OutputBuffer } from "./outputBuffer";
+import { appendOutput, MAX_TOTAL_OUTPUT_BYTES, OutputBuffer, trimOutput } from "./outputBuffer";
+import { DEFAULT_RUN_DRAFT, isActiveRun, newestStatus, RunDraft } from "./runState";
 import { loadWorkspaceHistory, rememberWorkspace, saveWorkspaceHistory } from "./workspaceHistory";
 import { DEFAULT_LAYOUT, LayoutState, loadLayout, normalizeLayout, saveLayout } from "./layoutState";
 
@@ -37,6 +38,8 @@ interface AppState {
   consoleSeq: number;
 
   history: RunStatus[];
+  runDraft: RunDraft;
+  setRunDraft: (patch: Partial<RunDraft>) => void;
 
   layout: LayoutState;
   setLayout: (patch: Partial<LayoutState>) => void;
@@ -53,12 +56,38 @@ interface AppState {
   reloadFile: () => Promise<void>;
   startRun: (request: RunRequest) => Promise<string>;
   handleRunEvent: (ev: RunEvent) => void;
+  handleRunEvents: (events: RunEvent[]) => void;
+  loadRuns: () => Promise<void>;
   setActiveRun: (id: string | null) => void;
   setConsoleSize: (cols: number, rows: number) => void;
   loadHistory: () => Promise<void>;
 }
 
 let loadSequence = 0;
+
+/** Retain live runs and the selected history entry; bound output across all runs. */
+function pruneRuns(state: Pick<AppState, "runs" | "history" | "outputBuffers" | "activeRunId">, pending: string[] = []) {
+  const keep = new Set(state.history.map((h) => h.run_id));
+  pending.slice(-32).forEach((id) => keep.add(id));
+  Object.values(state.runs).filter(isActiveRun).forEach((r) => keep.add(r.run_id));
+  if (state.activeRunId) keep.add(state.activeRunId);
+  const entries = Object.entries(state.runs).filter(([id]) => keep.has(id));
+  const runs = entries.length === Object.keys(state.runs).length ? state.runs : Object.fromEntries(entries);
+  const outputBuffers = Object.fromEntries(Object.entries(state.outputBuffers).filter(([id]) => keep.has(id)));
+  let excess = Object.values(outputBuffers).reduce((sum, b) => sum + b.bytes, 0) - MAX_TOTAL_OUTPUT_BYTES;
+  // Old completed runs are trimmed first, then live runs, with the selected run last.
+  const ids = Object.keys(outputBuffers).sort((a, b) =>
+    Number(a === state.activeRunId) - Number(b === state.activeRunId) ||
+    Number(!!runs[a] && isActiveRun(runs[a])) - Number(!!runs[b] && isActiveRun(runs[b])));
+  for (const id of ids) {
+    if (excess <= 0) break;
+    const old = outputBuffers[id];
+    outputBuffers[id] = trimOutput(old, Math.max(0, old.bytes - excess));
+    excess -= old.bytes - outputBuffers[id].bytes;
+  }
+  return { runs, outputBuffers };
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   devices: [],
   selectedDeviceId: null,
@@ -89,6 +118,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   consoleSeq: 0,
 
   history: [],
+  runDraft: { ...DEFAULT_RUN_DRAFT },
+  setRunDraft: (patch) => set((s) => ({ runDraft: { ...s.runDraft, ...patch } })),
 
   layout: loadLayout(),
 
@@ -120,6 +151,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   setWorkspaceDir: async (dir) => {
     if (get().saving || get().starting || get().guarding) return;
     const sequence = ++loadSequence;
+    // This selection owns loading cleanup as soon as it invalidates the old read.
+    set({ loading: false });
     if (!await get().confirmUnsaved() || sequence !== loadSequence) return;
     set({ loading: true, editorError: null });
     try {
@@ -129,7 +162,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (dir) saveWorkspaceHistory(recentWorkspaces);
       set((s) => ({ workspaceDir: dir, workspaceFiles: files, recentWorkspaces,
         openFile: null, fileContent: "", savedContent: "", revision: null,
-        conflict: false, documentGeneration: s.documentGeneration + 1 }));
+        conflict: false, documentGeneration: s.documentGeneration + 1,
+        runDraft: { ...s.runDraft, entry: "" } }));
     } catch (error) {
       if (sequence === loadSequence) set({ editorError: errorMessage(error) });
       throw error;
@@ -143,6 +177,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!dir || get().saving || get().starting || get().guarding) return;
     if (name === get().openFile && !get().loading) return;
     const sequence = ++loadSequence;
+    set({ loading: false });
     if (!await get().confirmUnsaved() || sequence !== loadSequence) return;
     set({ loading: true, editorError: null });
     try {
@@ -246,29 +281,56 @@ export const useAppStore = create<AppState>((set, get) => ({
     } finally { set({ starting: false }); }
   },
 
-  handleRunEvent: (ev) => {
-    if (ev.type === "output") {
-      const bytes = Uint8Array.from(atob(ev.data), (c) => c.charCodeAt(0));
-      set((s) => {
-        const bufs = { ...s.outputBuffers };
-        bufs[ev.run_id] = appendOutput(bufs[ev.run_id], bytes);
-        return { outputBuffers: bufs, consoleSeq: s.consoleSeq + 1 };
-      });
-    } else {
-      set((s) => ({
-        runs: { ...s.runs, [ev.status.run_id]: ev.status },
-      }));
-      const st = ev.status.state;
-      if (st === "exited" || st === "failed" || st === "canceled") {
-        set((s) => ({ history: [ev.status, ...s.history.filter((h) => h.run_id !== ev.status.run_id)].slice(0, 200) }));
+  handleRunEvent: (ev) => get().handleRunEvents([ev]),
+
+  handleRunEvents: (events) => {
+    if (!events.length) return;
+    set((s) => {
+      let runs = s.runs;
+      let history = s.history;
+      let outputBuffers = { ...s.outputBuffers };
+      for (const ev of events) {
+        if (ev.type === "output") {
+          const bytes = Uint8Array.from(atob(ev.data), (c) => c.charCodeAt(0));
+          outputBuffers[ev.run_id] = appendOutput(outputBuffers[ev.run_id], bytes);
+        } else if (ev.type === "resync") {
+          runs = Object.fromEntries(ev.statuses.map((r) => [r.run_id, r]));
+          history = ev.statuses.filter((r) => !isActiveRun(r)).slice(0, 200);
+          // Do not concatenate bytes across a missing interval (including UTF-8/ANSI).
+          for (const id of new Set([...Object.keys(outputBuffers), ...Object.keys(runs)])) {
+            const buffer = outputBuffers[id] ?? { chunks: [], bytes: 0, start: 0 };
+            outputBuffers[id] = { chunks: [], bytes: 0, start: buffer.start + buffer.chunks.length, gaps: (buffer.gaps ?? 0) + 1 };
+          }
+        } else {
+          const status = newestStatus(runs[ev.status.run_id], ev.status);
+          runs = { ...runs, [status.run_id]: status };
+          if (!isActiveRun(status)) history = [status, ...history.filter((h) => h.run_id !== status.run_id)].slice(0, 200);
+        }
       }
-    }
+      // Output can precede its first status in tests or after a late attachment.
+      // Keep those buffers until reconciliation, but still enforce the total budget.
+      const pending = Object.keys(outputBuffers).filter((id) => !runs[id]);
+      const retained = pruneRuns({ runs, history, outputBuffers, activeRunId: s.activeRunId }, pending);
+      return { ...retained, history, consoleSeq: s.consoleSeq + 1 };
+    });
   },
 
-  setActiveRun: (id) => set((s) => ({ activeRunId: id, consoleSeq: s.consoleSeq + 1 })),
+  setActiveRun: (id) => set((s) => ({ activeRunId: id, ...pruneRuns({ ...s, activeRunId: id }), consoleSeq: s.consoleSeq + 1 })),
   setConsoleSize: (cols, rows) => set({ consoleSize: { cols, rows } }),
 
   loadHistory: async () => {
-    set({ history: await api.getRunHistory() });
+    await get().loadRuns();
+  },
+  loadRuns: async () => {
+    const before = get().runs;
+    const [live, saved] = await Promise.all([api.listRunningRuns(), api.getRunHistory()]);
+    set((s) => {
+      const runs = { ...Object.fromEntries([...saved, ...live].map((r) => [r.run_id, r])) };
+      // Preserve events delivered while this snapshot was being fetched.
+      for (const [id, run] of Object.entries(s.runs)) if (run !== before[id]) runs[id] = newestStatus(runs[id], run);
+      const history = Object.values(runs).filter((r) => !isActiveRun(r)).sort((a, b) => (b.ended_at ?? "").localeCompare(a.ended_at ?? "")).slice(0, 200);
+      const activeRunId = s.activeRunId ?? live.find(isActiveRun)?.run_id ?? null;
+      return { ...pruneRuns({ ...s, runs, history, activeRunId }), history, activeRunId };
+    });
   },
 }));
