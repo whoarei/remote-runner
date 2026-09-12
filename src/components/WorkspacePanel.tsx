@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
+import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
 import type { WorkspaceEntry } from "../api";
 import { useAppStore } from "../store";
@@ -70,6 +71,7 @@ function InlineInput({ initial, label, onSubmit, onCancel }: {
 }
 
 function TreeLevel(props: TreeProps) {
+  const { t } = useTranslation();
   const { dir, depth, tree, openFile, disabled, editing, onOpen, onToggle, onMenu, onEditing } = props;
   const node = tree[dir];
   if (!node) return null;
@@ -79,7 +81,7 @@ function TreeLevel(props: TreeProps) {
       {creating && <li>
         <InlineInput
           initial=""
-          label={creating.mode === "create-file" ? "新建文件名" : "新建文件夹名"}
+          label={creating.mode === "create-file" ? t("workspace.newFileName") : t("workspace.newDirName")}
           onSubmit={(name) => {
             onEditing(null);
             void useAppStore.getState().createWorkspaceEntry(dir, name, creating.mode === "create-file" ? "file" : "dir");
@@ -96,7 +98,7 @@ function TreeLevel(props: TreeProps) {
             {renaming ? (
               <InlineInput
                 initial={entry.name}
-                label={`重命名 ${entry.name}`}
+                label={t("workspace.renameAria", { name: entry.name })}
                 onSubmit={(name) => {
                   onEditing(null);
                   void useAppStore.getState().renameWorkspaceEntry(path, name);
@@ -128,6 +130,7 @@ function TreeLevel(props: TreeProps) {
 }
 
 export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boolean; onToggleCollapse: () => void }) {
+  const { t } = useTranslation();
   const {
     workspaceDir,
     workspaceTree,
@@ -160,17 +163,17 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
     if (!workspaceDir) return;
     const path = entry ? joinPath(dir, entry.name) : dir;
     const entries: MenuEntry[] = [];
-    if (!entry) entries.push({ label: "刷新", onSelect: () => void useAppStore.getState().loadWorkspaceDir(dir) });
+    if (!entry) entries.push({ label: t("workspace.refresh"), onSelect: () => void useAppStore.getState().loadWorkspaceDir(dir) });
     // 新建入口只出现在目录与空白区；文件条目上只有打开/重命名/删除
     if (!entry || entry.is_dir) {
-      entries.push({ label: "新建文件", onSelect: () => void startCreate(path, "create-file") });
-      entries.push({ label: "新建文件夹", onSelect: () => void startCreate(path, "create-dir") });
+      entries.push({ label: t("workspace.newFile"), onSelect: () => void startCreate(path, "create-file") });
+      entries.push({ label: t("workspace.newDir"), onSelect: () => void startCreate(path, "create-dir") });
     }
     if (entry) {
       entries.push("separator");
-      if (!entry.is_dir) entries.push({ label: "打开", onSelect: () => void useAppStore.getState().openWorkspaceFile(path) });
-      entries.push({ label: "重命名", onSelect: () => setEditing({ mode: "rename", dir, entry }) });
-      entries.push({ label: "删除", danger: true, onSelect: () => setPendingDelete({ path, isDir: entry.is_dir }) });
+      if (!entry.is_dir) entries.push({ label: t("workspace.open"), onSelect: () => void useAppStore.getState().openWorkspaceFile(path) });
+      entries.push({ label: t("workspace.rename"), onSelect: () => setEditing({ mode: "rename", dir, entry }) });
+      entries.push({ label: t("workspace.delete"), danger: true, onSelect: () => setPendingDelete({ path, isDir: entry.is_dir }) });
     }
     setMenu({
       ...contextMenuPosition(event.clientX, event.clientY, entries.length),
@@ -179,11 +182,11 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
   };
 
   const confirmRequest: ConfirmRequest | null = useMemo(() => pendingDelete ? {
-    title: pendingDelete.isDir ? "删除文件夹？" : "删除文件？",
+    title: pendingDelete.isDir ? t("workspace.deleteDirTitle") : t("workspace.deleteFileTitle"),
     message: pendingDelete.isDir
-      ? `将递归删除 ${pendingDelete.path} 及其全部内容，且不可恢复。`
-      : `将永久删除 ${pendingDelete.path}，且不可恢复。`,
-    confirmLabel: "删除",
+      ? t("workspace.deleteDirMessage", { path: pendingDelete.path })
+      : t("workspace.deleteFileMessage", { path: pendingDelete.path }),
+    confirmLabel: t("workspace.delete"),
     danger: true,
     onCancel: () => setPendingDelete(null),
     onConfirm: () => {
@@ -191,20 +194,20 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
       setPendingDelete(null);
       void useAppStore.getState().deleteWorkspaceEntry(path);
     },
-  } : null, [pendingDelete]);
+  } : null, [pendingDelete, t]);
 
   return (
     <div
       className="workspace-panel"
       onContextMenu={collapsed ? undefined : (event) => openMenu(event, WORKSPACE_ROOT, null)}
     >
-      <PanelTitle title="Workspace" collapsed={collapsed} onToggle={onToggleCollapse} />
+      <PanelTitle title={t("workspace.title")} collapsed={collapsed} onToggle={onToggleCollapse} />
       {!collapsed && (
         <>
           {workspaceDir && <div className="workspace-dir">{workspaceDir}</div>}
           {workspaceError && <div className="workspace-error" role="alert">
             <span>{workspaceError}</span>
-            <button onClick={() => useAppStore.getState().dismissWorkspaceError()}>关闭</button>
+            <button onClick={() => useAppStore.getState().dismissWorkspaceError()}>{t("workspace.close")}</button>
           </div>}
           {workspaceDir ? (
             <div className="file-tree">
@@ -221,7 +224,7 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
                 onEditing={setEditing}
               />
             </div>
-          ) : <p className="workspace-empty">尚未选择工作区目录</p>}
+          ) : <p className="workspace-empty">{t("workspace.empty")}</p>}
         </>
       )}
       <ContextMenu menu={menu} disabled={disabled} onClose={() => setMenu(null)} />

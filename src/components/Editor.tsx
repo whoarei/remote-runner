@@ -9,6 +9,8 @@ import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { search, searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { python } from "@codemirror/lang-python";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
+import { useTranslation } from "react-i18next";
+import i18n from "../i18n";
 import { useAppStore } from "../store";
 import { dirtyTab, EditorLanguage, EditorTab, uploadBusy } from "../editorDocument";
 import { nameOf } from "../workspaceTree";
@@ -53,7 +55,7 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
             const state = useAppStore.getState();
             return !state.loading && !state.starting && !state.guarding;
           }),
-          EditorView.contentAttributes.of({ "aria-label": `脚本内容编辑器 ${tab}`, spellcheck: "false" }),
+          EditorView.contentAttributes.of({ "aria-label": i18n.t("editor.contentAria", { name: tab }), spellcheck: "false" }),
           keymap.of([
             { key: "Mod-s", preventDefault: true, run: () => { void useAppStore.getState().saveFile(tab); return true; } },
             { key: "Mod-w", preventDefault: true, run: () => { void useAppStore.getState().closeFile(tab); return true; } },
@@ -98,6 +100,7 @@ function CodeEditor({ tab, language, locked, active, onCursor, focusToolbar }: {
 }
 
 export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: boolean; onToggleCollapse?: () => void }) {
+  const { t } = useTranslation();
   const state = useAppStore(useShallow((s) => ({ tabs: s.openTabs, activeFile: s.activeFile,
     loading: s.loading, saving: s.saving, starting: s.starting, guarding: s.guarding,
     error: s.editorError, uploadBusy: uploadBusy(s) })));
@@ -107,12 +110,12 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
   const active = state.tabs.find((tab) => tab.name === state.activeFile);
   return <div className={`editor${state.tabs.length === 0 ? " empty" : ""}`}>
     {state.error && <div className="editor-error" role="alert">{state.error}
-      {active?.conflict && <button disabled={locked || state.saving} onClick={() => void useAppStore.getState().reloadFile()}>重新加载磁盘内容…</button>}
+      {active?.conflict && <button disabled={locked || state.saving} onClick={() => void useAppStore.getState().reloadFile()}>{t("editor.reloadDisk")}</button>}
     </div>}
-    {state.tabs.length === 0 ? <p>{state.loading ? "正在打开…" : "在左侧 Workspace 中选择脚本文件，或用下方命令模式运行。"}</p> : <>
-      <div className="editor-tabs" role="tablist" aria-label="打开的文件">
-        <button className="editor-collapse" aria-label={collapsed ? "展开编辑区" : "折叠编辑区"} aria-expanded={!collapsed}
-          title={collapsed ? "展开编辑区" : "折叠编辑区"} onClick={onToggleCollapse}>{collapsed ? "▸" : "▾"}</button>
+    {state.tabs.length === 0 ? <p>{state.loading ? t("editor.opening") : t("editor.placeholder")}</p> : <>
+      <div className="editor-tabs" role="tablist" aria-label={t("editor.openTabs")}>
+        <button className="editor-collapse" aria-label={collapsed ? t("editor.expand") : t("editor.collapse")} aria-expanded={!collapsed}
+          title={collapsed ? t("editor.expand") : t("editor.collapse")} onClick={onToggleCollapse}>{collapsed ? "▸" : "▾"}</button>
         {state.tabs.map((tab) => (
           <div key={tab.name} role="tab" aria-selected={tab.name === state.activeFile}
             className={`editor-tab${tab.name === state.activeFile ? " active" : ""}`}>
@@ -120,7 +123,7 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
               onClick={() => useAppStore.getState().activateFile(tab.name)}>
               {nameOf(tab.name)}{dirtyTab(tab) ? " ●" : ""}
             </button>
-            <button className="editor-tab-close" aria-label={`关闭 ${tab.name}`} title="关闭文件"
+            <button className="editor-tab-close" aria-label={t("editor.closeTab", { name: tab.name })} title={t("editor.closeFileTitle")}
               disabled={locked || state.saving}
               onClick={() => void useAppStore.getState().closeFile(tab.name)}>×</button>
           </div>
@@ -139,21 +142,21 @@ export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: bo
           ))}
           <div className="editor-status" role="status">
             <span>
-              {state.loading ? "正在打开…" : state.starting ? "正在保存并启动…" : state.saving ? "保存中…"
-                : state.error ? "操作失败"
+              {state.loading ? t("editor.opening") : state.starting ? t("editor.savingAndStarting") : state.saving ? t("editor.saving")
+                : state.error ? t("editor.failed")
                 : dirtyTab(active)
                   ? <button className="editor-status-save" disabled={locked || state.uploadBusy}
-                      title="保存到本地文件 (Ctrl+S)"
-                      onClick={() => void useAppStore.getState().saveFile()}>保存</button>
-                  : "已保存"}
-              {state.uploadBusy ? " · 任务准备/同步/停止期间暂停保存" : ""}
+                      title={t("editor.saveTitle")}
+                      onClick={() => void useAppStore.getState().saveFile()}>{t("editor.save")}</button>
+                  : t("editor.saved")}
+              {state.uploadBusy ? t("editor.uploadBusyHint") : ""}
             </span>
             <span className="editor-status-right">
-              <select ref={languageSelect} aria-label="编辑器语言" value={active.language} disabled={locked}
+              <select ref={languageSelect} aria-label={t("editor.languageAria")} value={active.language} disabled={locked}
                 onChange={(event) => useAppStore.getState().setLanguage(event.target.value as EditorLanguage)}>
-                <option value="python">Python</option><option value="shell">Shell</option><option value="text">纯文本</option>
+                <option value="python">Python</option><option value="shell">Shell</option><option value="text">{t("editor.plainText")}</option>
               </select>
-              <span>{cursor} · UTF-8{active.bom ? " BOM" : ""} · {active.eol.toUpperCase()} · Esc 跳出编辑器</span>
+              <span>{cursor} · UTF-8{active.bom ? " BOM" : ""} · {active.eol.toUpperCase()} · {t("editor.escHint")}</span>
             </span>
           </div>
         </>}

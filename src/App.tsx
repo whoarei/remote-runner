@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { onRunEvents, api } from "./api";
 import { useAppStore } from "./store";
 import { DeviceDialog } from "./components/DeviceDialog";
@@ -14,6 +15,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { anyDirty } from "./editorDocument";
 import { errorMessage } from "./api";
+import i18n from "./i18n";
 import { requestQuit } from "./appLifecycle";
 import { clampSidebarWidth, clampConsoleHeight, clampSideSplit, DEFAULT_LAYOUT } from "./layoutState";
 import { checkForAvailableUpdate } from "./updateStatus";
@@ -21,6 +23,7 @@ import { checkForAvailableUpdate } from "./updateStatus";
 const Editor = lazy(() => import("./components/Editor").then((module) => ({ default: module.Editor })));
 
 export default function App() {
+  const { t } = useTranslation();
   const loadDevices = useAppStore((s) => s.loadDevices);
   const loadRuns = useAppStore((s) => s.loadRuns);
   const handleRunEvents = useAppStore((s) => s.handleRunEvents);
@@ -52,7 +55,7 @@ export default function App() {
     const unlisten = isTauri() ? getCurrentWindow().onCloseRequested((event) => {
       event.preventDefault();
       void getCurrentWindow().hide().catch((error) => {
-        useAppStore.setState({ editorError: `窗口操作失败：${errorMessage(error)}` });
+        useAppStore.setState({ editorError: i18n.t("app.windowError", { message: errorMessage(error) }) });
       });
     }) : Promise.resolve(() => {});
     const unlistenQuit = isTauri()
@@ -60,7 +63,7 @@ export default function App() {
       : Promise.resolve(() => {});
     void Promise.all([unlisten, unlistenQuit])
       .then(() => { if (!disposed) setCloseReady(true); })
-      .catch((error) => useAppStore.setState({ editorError: `关闭保护注册失败：${errorMessage(error)}` }));
+      .catch((error) => useAppStore.setState({ editorError: i18n.t("app.closeGuardFailed", { message: errorMessage(error) }) }));
     return () => {
       disposed = true;
       window.removeEventListener("beforeunload", beforeUnload);
@@ -81,7 +84,7 @@ export default function App() {
       {layout.sidebarPosition === "right" && (
         <SplitHandle
           direction="vertical"
-          label="调整侧栏宽度"
+          label={t("app.resizeSidebar")}
           onDelta={(delta) => setLayout({ sidebarWidth: clampSidebarWidth(layout.sidebarWidth - delta) })}
           onReset={() => setLayout({ sidebarWidth: DEFAULT_LAYOUT.sidebarWidth })}
         />
@@ -102,7 +105,7 @@ export default function App() {
         {bothExpanded && (
           <SplitHandle
             direction="horizontal"
-            label="调整工作区与历史面板比例"
+            label={t("app.resizeSideSplit")}
             onDelta={(delta) => {
               const height = sideRef.current?.clientHeight ?? 0;
               if (height > 0) setLayout({ sideSplit: clampSideSplit(layout.sideSplit + delta / height) });
@@ -126,7 +129,7 @@ export default function App() {
       {layout.sidebarPosition === "left" && (
         <SplitHandle
           direction="vertical"
-          label="调整侧栏宽度"
+          label={t("app.resizeSidebar")}
           onDelta={(delta) => setLayout({ sidebarWidth: clampSidebarWidth(layout.sidebarWidth + delta) })}
           onReset={() => setLayout({ sidebarWidth: DEFAULT_LAYOUT.sidebarWidth })}
         />
@@ -151,7 +154,7 @@ export default function App() {
         {layout.sidebarPosition === "left" && sidebar}
         <div className="workbench">
           <section className="center" style={layout.editorCollapsed ? { flex: "0 0 auto" } : undefined}>
-            <Suspense fallback={<div className="editor empty">正在加载编辑器…</div>}>
+            <Suspense fallback={<div className="editor empty">{t("app.loadingEditor")}</div>}>
               <Editor
                 collapsed={layout.editorCollapsed}
                 onToggleCollapse={() => setLayout({ editorCollapsed: !layout.editorCollapsed })}
@@ -163,7 +166,7 @@ export default function App() {
               {layout.consoleVisible && !layout.consoleCollapsed && !layout.editorCollapsed && (
                 <SplitHandle
                   direction="horizontal"
-                  label="调整控制台高度"
+                  label={t("app.resizeConsole")}
                   onDelta={(delta) => setLayout({ consoleHeight: clampConsoleHeight(layout.consoleHeight - delta) })}
                   onReset={() => setLayout({ consoleHeight: DEFAULT_LAYOUT.consoleHeight })}
                 />

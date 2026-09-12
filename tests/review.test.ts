@@ -4,10 +4,14 @@ import React, { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { api, RunStatus } from "../src/api";
 import { useAppStore } from "../src/store";
+import i18n from "../src/i18n";
 import { HistoryPanel } from "../src/components/HistoryPanel";
 import { RunToolbar } from "../src/components/RunToolbar";
 import { MAX_OUTPUT_BYTES, MAX_TOTAL_OUTPUT_BYTES } from "../src/outputBuffer";
 import { createConsoleReplay } from "../src/consoleReplay";
+
+// 文案断言基于中文字典，固定测试语言避免随运行环境漂移
+test.before(async () => { await i18n.changeLanguage("zh"); });
 
 const status = (id: string, state = "exited"): RunStatus => ({ run_id: id, state, label: id, device_name: "test",
   exit_code: state === "exited" ? 0 : null, error: null, started_at: "2026-09-12T00:00:00Z", ended_at: state === "exited" ? "2026-09-12T00:00:01Z" : null });
@@ -60,7 +64,7 @@ test("running tasks remain selectable and stoppable while viewing completed hist
   assert.match(toolbar, /选择运行中的任务/);
   assert.match(toolbar, /value="long-task"/);
   s.setActiveRun("long-task");
-  assert.match(renderToStaticMarkup(createElement(RunToolbar)), /■ Stop/);
+  assert.match(renderToStaticMarkup(createElement(RunToolbar)), /■ 停止/);
 });
 
 test("run drafts survive panel remount and layout reset; workspace switch clears only entry", async (t) => {

@@ -1,6 +1,7 @@
 /** 升级流程的纯展示辅助（无 Tauri 依赖，便于单元测试）。 */
 import { anyDirty, EditorTab } from "./editorDocument";
 import type { AppUpdateInfo } from "./api";
+import i18n from "./i18n";
 
 export interface UpdateProgress {
   phase: "downloading" | "verifying" | "installing";
@@ -13,9 +14,9 @@ export function updateInstallBlocker(state: {
   loading: boolean; saving: boolean; starting: boolean; guarding: boolean; workspaceMutating: boolean;
   runs: Record<string, { state: string }>;
 }): string | null {
-  if (state.loading || state.saving || state.starting || state.guarding || state.workspaceMutating) return "请等待当前文件或任务操作完成。";
-  if (anyDirty(state)) return "请先保存编辑器中的修改，再安装更新。";
-  if (Object.values(state.runs).some((run) => ["preparing", "syncing", "running", "stopping"].includes(run.state))) return "请先停止或等待所有运行任务结束，再安装更新。";
+  if (state.loading || state.saving || state.starting || state.guarding || state.workspaceMutating) return i18n.t("update.blockerBusy");
+  if (anyDirty(state)) return i18n.t("update.blockerDirty");
+  if (Object.values(state.runs).some((run) => ["preparing", "syncing", "running", "stopping"].includes(run.state))) return i18n.t("update.blockerRunning");
   return null;
 }
 
@@ -51,16 +52,16 @@ export function directUpdateAction(info: AppUpdateInfo, blocker: string | null):
 
 /** 标题栏按钮的紧凑进度文案。 */
 export function updateButtonLabel(phase: UpdateButtonPhase | null): string {
-  if (!phase) return "更新";
+  if (!phase) return i18n.t("update.button");
   switch (phase.kind) {
-    case "checking": return "正在检查…";
+    case "checking": return i18n.t("update.checking");
     case "downloading": {
-      if (phase.total === null || phase.total <= 0) return `下载中 ${formatBytes(phase.downloaded)}`;
+      if (phase.total === null || phase.total <= 0) return i18n.t("update.downloadingBytes", { size: formatBytes(phase.downloaded) });
       const percent = Math.min(100, Math.floor((phase.downloaded / phase.total) * 100));
-      return `下载中 ${percent}%`;
+      return i18n.t("update.downloadingPercent", { percent });
     }
-    case "verifying": return "验证签名…";
-    case "installing": return "正在安装…";
+    case "verifying": return i18n.t("update.verifying");
+    case "installing": return i18n.t("update.installing");
   }
 }
 
@@ -79,9 +80,9 @@ export function formatBytes(bytes: number): string {
 
 /** 下载进度文案；total 未知时只显示已下载体积。 */
 export function formatDownloadProgress(downloaded: number, total: number | null): string {
-  if (total === null || total <= 0) return `已下载 ${formatBytes(downloaded)}`;
+  if (total === null || total <= 0) return i18n.t("update.progressBytes", { downloaded: formatBytes(downloaded) });
   const percent = Math.min(100, Math.floor((downloaded / total) * 100));
-  return `已下载 ${formatBytes(downloaded)} / ${formatBytes(total)}（${percent}%）`;
+  return i18n.t("update.progressFull", { downloaded: formatBytes(downloaded), total: formatBytes(total), percent });
 }
 
 /** 启动时静默检查：仅在有更新时回调；离线或检查失败不打扰用户。 */

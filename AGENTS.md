@@ -15,6 +15,7 @@ There is no hardware available in the development environment. Serial behavior i
 ## Repository map
 
 - `src/`: React UI, API bindings, Zustand state, and xterm console.
+- `src/i18n/`: frontend i18n (`i18next` + `react-i18next`, zh/en, inline resources; design: `docs/00020_20260913_i18n.md`). `zh.ts` is the key source of truth; `en.ts` is type-constrained to the same keys. UI strings must go through `t()` — components use `useTranslation()`, logic modules import the `i18n` instance directly. Language follows the persisted preference (`zh` / `en` / `system`, default `system` = system locale), switchable via View → Language.
 - `tests/`: frontend tests, bundled by esbuild and run via `node --test`.
 - `src-tauri/src/runner.rs`: request validation, run lifecycle, status/history, per-run output log persistence (`run_logs/`, 2 MiB cap, pruned with history), and transport dispatch.
 - `src-tauri/src/ssh/`: SSH client, SFTP synchronization, and SSH process sessions.

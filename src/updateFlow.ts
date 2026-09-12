@@ -2,6 +2,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api, errorMessage, type AppUpdateInfo } from "./api";
+import i18n from "./i18n";
 import { useAppStore } from "./store";
 import { useTerminalStore, terminalActive } from "./terminalStore";
 import {
@@ -26,7 +27,7 @@ export async function installCheckedUpdate(
         else onPhase({ kind: "downloading", downloaded: payload.downloaded, total: payload.total });
       }), api.installAppUpdate);
     // On Windows a successful install command exits the process. Returning is unexpected.
-    throw new Error("安装程序未接管应用，请重试或手动下载更新");
+    throw new Error(i18n.t("update.installerNotTakeOver"));
   } finally {
     useAppStore.setState({ updating: false });
   }
@@ -34,7 +35,7 @@ export async function installCheckedUpdate(
 
 function installBlocker(): string | null {
   return updateInstallBlocker(useAppStore.getState())
-    || (useTerminalStore.getState().tabs.some(terminalActive) ? "请先关闭活动终端，再安装更新。" : null);
+    || (useTerminalStore.getState().tabs.some(terminalActive) ? i18n.t("about.closeTerminalBlocker") : null);
 }
 
 let oneClickRunning = false;
@@ -52,7 +53,7 @@ export async function startOneClickUpdate(
   }
   if (action.kind === "manual") {
     try { await openUrl(action.url); }
-    catch (error) { useAppStore.setState({ editorError: `无法打开浏览器：${errorMessage(error)}` }); }
+    catch (error) { useAppStore.setState({ editorError: i18n.t("update.openBrowserFailed", { message: errorMessage(error) }) }); }
     return;
   }
   oneClickRunning = true;
@@ -61,13 +62,13 @@ export async function startOneClickUpdate(
     // Re-pin the exact metadata so install never depends on a stale startup check.
     const fresh = await api.checkAppUpdate();
     if (!fresh) {
-      useAppStore.setState({ availableUpdate: null, editorError: "已是最新版本。" });
+      useAppStore.setState({ availableUpdate: null, editorError: i18n.t("update.upToDate") });
       return;
     }
     useAppStore.setState({ availableUpdate: fresh });
     await installCheckedUpdate(fresh, onPhase);
   } catch (error) {
-    useAppStore.setState({ editorError: `自动升级失败，可在「帮助 → 检查更新…」中手动下载：${errorMessage(error)}` });
+    useAppStore.setState({ editorError: i18n.t("update.autoFailedManual", { message: errorMessage(error) }) });
   } finally {
     oneClickRunning = false;
     onPhase(null);

@@ -4,8 +4,10 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { api } from "../api";
 import { useAppStore } from "../store";
+import { runStateLabel } from "../runState";
 import { PanelTitle } from "./PanelTitle";
 import { useShallow } from "zustand/react/shallow";
+import { useTranslation } from "react-i18next";
 import { createConsoleReplay } from "../consoleReplay";
 
 /**
@@ -13,6 +15,7 @@ import { createConsoleReplay } from "../consoleReplay";
  * 折叠时终端保持挂载，仅隐藏 DOM，避免 xterm 重新附着和输出丢失。
  */
 export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { collapsed: boolean; onToggleCollapse: () => void; embedded?: boolean }) {
+  const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -111,10 +114,10 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
 
   return (
     <div className="run-console">
-      {!embedded && <PanelTitle className="console-header" title="Run Console" collapsed={collapsed} onToggle={onToggleCollapse}>
+      {!embedded && <PanelTitle className="console-header" title={t("console.runTab")} collapsed={collapsed} onToggle={onToggleCollapse}>
         {activeRun && (
           <span className={`run-state state-${activeRun.state}`}>
-            {activeRun.run_id} · {activeRun.state}
+            {activeRun.run_id} · {runStateLabel(activeRun.state)}
             {activeRun.exit_code != null && ` · exit=${activeRun.exit_code}`}
           </span>
         )}

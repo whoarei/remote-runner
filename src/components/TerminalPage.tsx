@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -6,9 +7,8 @@ import { api } from "../api";
 import { useTerminalStore, terminalActive, type TerminalTab } from "../terminalStore";
 import { readTerminal, terminalInput } from "../terminalIO";
 
-const labels = { connecting: "连接中…", connected: "已连接", closing: "关闭中…", exited: "已退出", failed: "连接失败", closed: "已关闭" };
-
 export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: boolean }) {
+  const { t } = useTranslation();
   const container = useRef<HTMLDivElement>(null);
   const terminal = useRef<Terminal>();
   const fit = useRef<() => void>();
@@ -71,12 +71,12 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
   return <section className="terminal-page" role="tabpanel" id={`panel-${tab.id}`} aria-labelledby={`tab-${tab.id}`} hidden={!visible}>
     <div className="terminal-toolbar">
       <span className={`terminal-status terminal-${tab.status?.state ?? "connecting"}`} aria-live="polite">
-        {tab.busy ? "处理中…" : tab.status ? labels[tab.status.state] : "未连接"}
+        {tab.busy ? t("terminal.busy") : tab.status ? t(`terminal.${tab.status.state}`) : t("terminal.notConnected")}
         {tab.status?.exit_code != null && ` · exit=${tab.status.exit_code}`}
       </span>
-      <span className="terminal-hint">Ctrl+C 中断 · Ctrl+Shift+C / V 复制粘贴</span>
-      {!terminalActive(tab) && <button onClick={() => void useTerminalStore.getState().reconnect(tab.id)}>重新连接</button>}
-      <button disabled={tab.busy} title="关闭此终端会话及标签" onClick={() => void useTerminalStore.getState().close(tab.id)}>关闭终端</button>
+      <span className="terminal-hint">{t("terminal.hint")}</span>
+      {!terminalActive(tab) && <button onClick={() => void useTerminalStore.getState().reconnect(tab.id)}>{t("terminal.reconnect")}</button>}
+      <button disabled={tab.busy} title={t("terminal.closeTitle")} onClick={() => void useTerminalStore.getState().close(tab.id)}>{t("terminal.close")}</button>
     </div>
     {(tab.error || tab.status?.error) && <div className="terminal-error" role="alert">{tab.error || tab.status?.error}</div>}
     <div className="console-body" ref={container} />

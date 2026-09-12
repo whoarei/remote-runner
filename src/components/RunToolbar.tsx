@@ -1,13 +1,15 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
 import { api, inferKind, RunRequest, ScriptKind } from "../api";
 import { useAppStore } from "../store";
 import { anyDirty } from "../editorDocument";
-import { isActiveRun } from "../runState";
+import { isActiveRun, runStateLabel } from "../runState";
 import { collectScripts } from "../workspaceTree";
 import { deviceLabel } from "./DeviceDialog";
 
 export function RunToolbar() {
+  const { t } = useTranslation();
   const {
     selectedDeviceId,
     devices,
@@ -40,7 +42,7 @@ export function RunToolbar() {
 
   const run = async () => {
     if (!selectedDeviceId) {
-      alert("请先选择设备");
+      alert(t("run.selectDeviceFirst"));
       return;
     }
     setBusy(true);
@@ -59,12 +61,12 @@ export function RunToolbar() {
         };
       } else {
         if (!effectiveEntry) {
-          alert("请选择入口脚本");
+          alert(t("run.selectEntry"));
           return;
         }
         const kind: ScriptKind = inferKind(effectiveEntry);
         if (kind === "command") {
-          alert("仅支持 .py / .sh 脚本，其他请用命令模式");
+          alert(t("run.unsupportedScript"));
           return;
         }
         request = {
@@ -79,7 +81,7 @@ export function RunToolbar() {
       }
       await useAppStore.getState().startRun(request);
     } catch (e) {
-      alert(`启动失败: ${e}`);
+      alert(t("run.startFailed", { message: String(e) }));
     } finally {
       setBusy(false);
     }
@@ -88,32 +90,32 @@ export function RunToolbar() {
   const stop = async () => {
     try {
       if (activeRunId) await api.stopRun(activeRunId);
-    } catch (e) { alert(`停止失败: ${e}`); }
+    } catch (e) { alert(t("run.stopFailed", { message: String(e) })); }
   };
 
   const scriptFiles = collectScripts(workspaceTree);
 
   return (
     <div className="run-toolbar">
-      {Object.values(runs).some(isActiveRun) && <select aria-label="选择运行中的任务" value={activeRun && isActiveRun(activeRun) ? activeRunId! : ""}
+      {Object.values(runs).some(isActiveRun) && <select aria-label={t("run.runningTasksAria")} value={activeRun && isActiveRun(activeRun) ? activeRunId! : ""}
         onChange={(e) => { if (e.target.value) useAppStore.getState().setActiveRun(e.target.value); }}>
-        <option value="">运行中的任务…</option>
+        <option value="">{t("run.runningTasks")}</option>
         {Object.values(runs).filter(isActiveRun).map((r) => <option key={r.run_id} value={r.run_id}>{r.label} @ {r.device_name}</option>)}
       </select>}
-      <select aria-label="选择设备" value={selectedDeviceId ?? ""} onChange={(e) => selectDevice(e.target.value || null)}>
-        {devices.length === 0 && <option value="">（无设备，请先在“文件”菜单添加）</option>}
+      <select aria-label={t("run.selectDeviceAria")} value={selectedDeviceId ?? ""} onChange={(e) => selectDevice(e.target.value || null)}>
+        {devices.length === 0 && <option value="">{t("run.noDevicesHint")}</option>}
         {devices.map((d) => (
           <option key={d.id} value={d.id}>{deviceLabel(d)}</option>
         ))}
       </select>
       <select value={mode} onChange={(e) => setDraft({ mode: e.target.value as "script" | "command" })}>
-        <option value="script">脚本</option>
-        <option value="command">命令</option>
+        <option value="script">{t("run.modeScript")}</option>
+        <option value="command">{t("run.modeCommand")}</option>
       </select>
 
       {mode === "script" ? (
         <select value={effectiveEntry} onChange={(e) => setDraft({ entry: e.target.value })}>
-          <option value="">选择入口脚本…</option>
+          <option value="">{t("run.selectEntryPlaceholder")}</option>
           {scriptFiles.map((path) => (
             <option key={path} value={path}>
               {path}
@@ -123,7 +125,7 @@ export function RunToolbar() {
       ) : (
         <input
           className="command-input"
-          placeholder="输入远程命令，如：cat /proc/cpuinfo | head -5"
+          placeholder={t("run.commandPlaceholder")}
           value={command}
           onChange={(e) => setDraft({ command: e.target.value })}
         />
@@ -132,7 +134,7 @@ export function RunToolbar() {
       {mode === "script" && (
         <input
           className="args-input"
-          placeholder="参数（空格分隔）"
+          placeholder={t("run.argsPlaceholder")}
           value={argsText}
           onChange={(e) => setDraft({ argsText: e.target.value })}
         />
@@ -141,10 +143,10 @@ export function RunToolbar() {
       <select
         value={effectiveConsoleMode}
         disabled={isSerial}
-        title={isSerial ? "串口：合并输出，仅启动时设置行列数" : "console 模式：pty 支持交互/TUI；pipe 分离 stdout/stderr"}
+        title={isSerial ? t("run.serialConsoleTitle") : t("run.consoleModeTitle")}
         onChange={(e) => setDraft({ consoleMode: e.target.value as "pty" | "pipe" })}
       >
-        <option value="pty">{isSerial ? "串口 Console" : "pty"}</option>
+        <option value="pty">{isSerial ? t("run.serialConsole") : "pty"}</option>
         {!isSerial && <option value="pipe">pipe</option>}
       </select>
 
@@ -152,24 +154,24 @@ export function RunToolbar() {
         className="timeout-input"
         type="number"
         min={0}
-        title="超时（秒），0 = 不限"
+        title={t("run.timeoutTitle")}
         value={timeoutSecs}
         onChange={(e) => setDraft({ timeoutSecs: Number(e.target.value) || 0 })}
       />
 
       {running ? (
         <button className="danger" onClick={stop}>
-          ■ Stop
+          {t("run.stop")}
         </button>
       ) : (
         <button className="run-start" disabled={busy || editorBusy || !selectedDeviceId} onClick={run}>
-          {dirty ? "▶ 保存并运行" : "▶ Run"}
+          {dirty ? t("run.saveAndRun") : t("run.run")}
         </button>
       )}
 
       {activeRun && (
         <span className={`run-state state-${activeRun.state}`}>
-          {activeRun.state}
+          {runStateLabel(activeRun.state)}
           {activeRun.exit_code != null && ` (${activeRun.exit_code})`}
           {activeRun.error && ` — ${activeRun.error}`}
         </span>

@@ -1,5 +1,6 @@
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, RunStatus } from "./api";
+import i18n from "./i18n";
 
 function timestamp(iso: string): string {
   const date = new Date(iso);
@@ -42,5 +43,5 @@ export async function exportOutput(status: RunStatus): Promise<string | null> {
   });
   if (!path) return null;
   await api.exportRunOutput(status.run_id, path);
-  return status.output_truncated ? "输出超过 2 MiB，导出的日志仅为开头部分" : null;
+  return status.output_truncated ? i18n.t("history.outputTruncated") : null;
 }

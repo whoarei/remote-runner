@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api, errorMessage, type TerminalStatus } from "./api";
+import i18n from "./i18n";
 
 export interface TerminalTab {
   id: string;
@@ -39,8 +40,8 @@ export const useTerminalStore = create<TerminalStore>((set, get) => {
     tabs: [], activeTab: "run", shuttingDown: false,
     select: (id) => { if (id === "run" || get().tabs.some((t) => t.id === id)) set({ activeTab: id }); },
     open: (deviceId, deviceName) => {
-      if (get().shuttingDown) return Promise.reject(new Error("正在关闭终端"));
-      if (get().tabs.length >= 8) return Promise.reject(new Error("最多打开 8 个终端，请先关闭一个标签"));
+      if (get().shuttingDown) return Promise.reject(new Error(i18n.t("terminal.closingAll")));
+      if (get().tabs.length >= 8) return Promise.reject(new Error(i18n.t("terminal.maxTabs")));
       const id = crypto.randomUUID();
       set((s) => ({ tabs: [...s.tabs, { id, deviceId, deviceName, busy: true }], activeTab: id }));
       return track((async () => {

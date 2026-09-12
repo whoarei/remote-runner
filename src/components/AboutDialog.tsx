@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useTranslation } from "react-i18next";
 import { getVersion } from "@tauri-apps/api/app";
 import { isTauri } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -28,12 +29,13 @@ interface UpdateSectionProps {
 
 /** 检查更新 + 升级操作区。方案 A（安装形态）应用内自动升级，方案 B（portable）回退手动下载。 */
 function UpdateSection({ autoCheckNonce }: UpdateSectionProps) {
+  const { t } = useTranslation();
   const [phase, setPhase] = useState<UpdatePhase>({ kind: "idle" });
   const busyRef = useRef(false);
   const mounted = useRef(true);
   const runBlocker = useAppStore(updateInstallBlocker);
   const terminalBusy = useTerminalStore((s) => s.tabs.some(terminalActive));
-  const blocker = runBlocker || (terminalBusy ? "请先关闭活动终端，再安装更新。" : null);
+  const blocker = runBlocker || (terminalBusy ? t("about.closeTerminalBlocker") : null);
 
   const check = useCallback(async () => {
     if (busyRef.current) return;
@@ -55,7 +57,7 @@ function UpdateSection({ autoCheckNonce }: UpdateSectionProps) {
 
   const install = useCallback(async (info: AppUpdateInfo) => {
     if (busyRef.current) return;
-    const blocked = updateInstallBlocker(useAppStore.getState()) || (useTerminalStore.getState().tabs.some(terminalActive) ? "请先关闭活动终端，再安装更新。" : null);
+    const blocked = updateInstallBlocker(useAppStore.getState()) || (useTerminalStore.getState().tabs.some(terminalActive) ? t("about.closeTerminalBlocker") : null);
     if (blocked) { setPhase({ kind: "error", message: blocked }); return; }
     busyRef.current = true;
     try {
@@ -66,44 +68,44 @@ function UpdateSection({ autoCheckNonce }: UpdateSectionProps) {
         else setPhase({ kind: phase.kind });
       });
     } catch (error) {
-      if (mounted.current) setPhase({ kind: "error", message: `自动升级失败，可改用手动下载：${errorMessage(error)}` });
+      if (mounted.current) setPhase({ kind: "error", message: t("about.installFailed", { message: errorMessage(error) }) });
     } finally {
       busyRef.current = false;
     }
-  }, []);
+  }, [t]);
 
   const openDownload = useCallback(() => {
     void openUrl(RELEASES_URL).catch((error) => {
-      setPhase({ kind: "error", message: `无法打开浏览器：${errorMessage(error)}` });
+      setPhase({ kind: "error", message: t("update.openBrowserFailed", { message: errorMessage(error) }) });
     });
-  }, []);
+  }, [t]);
 
   const busy = phase.kind === "checking" || phase.kind === "downloading" || phase.kind === "verifying" || phase.kind === "installing";
 
   return (
-    <section className="about-update" aria-label="检查更新" aria-live="polite">
+    <section className="about-update" aria-label={t("about.checkAria")} aria-live="polite">
       <div className="about-update-row">
         <button type="button" className="primary" disabled={busy} onClick={() => void check()}>
-          {phase.kind === "checking" ? "正在检查…" : "检查更新"}
+          {phase.kind === "checking" ? t("about.checking") : t("about.check")}
         </button>
         {phase.kind === "available" && (
           <>
             {phase.info.can_auto_install && (
-              <button type="button" disabled={!!blocker} onClick={() => void install(phase.info)}>下载并安装（将重启应用）</button>
+              <button type="button" disabled={!!blocker} onClick={() => void install(phase.info)}>{t("about.installButton")}</button>
             )}
-            <button type="button" onClick={openDownload}>打开下载页面</button>
+            <button type="button" onClick={openDownload}>{t("about.openDownload")}</button>
           </>
         )}
         {phase.kind === "error" && (
-          <button type="button" onClick={openDownload}>打开下载页面</button>
+          <button type="button" onClick={openDownload}>{t("about.openDownload")}</button>
         )}
       </div>
-      {phase.kind === "uptodate" && <p className="about-update-status">已是最新版本。</p>}
+      {phase.kind === "uptodate" && <p className="about-update-status">{t("about.upToDate")}</p>}
       {phase.kind === "available" && (
         <div className="about-update-status">
           <p>
-            发现新版本 {phase.info.latest_version}（当前 {phase.info.current_version}）。
-            {!phase.info.can_auto_install && "未检测到受支持的安装版，请手动下载更新。"}
+            {t("about.available", { latest: phase.info.latest_version, current: phase.info.current_version })}
+            {!phase.info.can_auto_install && t("about.manualOnly")}
           </p>
           {phase.info.can_auto_install && blocker && <p className="about-update-error">{blocker}</p>}
           {phase.info.notes && <pre className="about-update-notes">{phase.info.notes}</pre>}
@@ -115,14 +117,15 @@ function UpdateSection({ autoCheckNonce }: UpdateSectionProps) {
           <p>{formatDownloadProgress(phase.downloaded, phase.total)}</p>
         </div>
       )}
-      {phase.kind === "verifying" && <p className="about-update-status">下载完成，正在验证签名…</p>}
-      {phase.kind === "installing" && <p className="about-update-status">正在启动安装程序，应用将退出并在安装后重新打开…</p>}
+      {phase.kind === "verifying" && <p className="about-update-status">{t("about.verifying")}</p>}
+      {phase.kind === "installing" && <p className="about-update-status">{t("about.installing")}</p>}
       {phase.kind === "error" && <p className="about-update-status about-update-error">{phase.message}</p>}
     </section>
   );
 }
 
 export function AboutDialog({ dialogRef, autoCheckNonce = 0 }: { dialogRef: RefObject<HTMLDialogElement>; autoCheckNonce?: number }) {
+  const { t } = useTranslation();
   const [version, setVersion] = useState(buildVersion);
   const updating = useAppStore((state) => state.updating);
 
@@ -148,20 +151,20 @@ export function AboutDialog({ dialogRef, autoCheckNonce = 0 }: { dialogRef: RefO
       <div className="about-heading">
         <img className="about-logo" src={appIcon} alt="" width="40" height="40" />
         <div>
-          <h2 id="about-title">关于 {productName}</h2>
-          <p className="about-version">版本 {version}</p>
+          <h2 id="about-title">{t("about.title", { name: productName })}</h2>
+          <p className="about-version">{t("about.version", { version })}</p>
         </div>
       </div>
-      <p id="about-description">用于在嵌入式 Linux 设备和本机 WSL 中运行 Python、Shell 脚本及命令的桌面工具。</p>
-      <ul className="about-transports" aria-label="支持的连接方式">
+      <p id="about-description">{t("about.description")}</p>
+      <ul className="about-transports" aria-label={t("about.transportsAria")}>
         <li>SSH</li>
-        <li>串口 Shell</li>
+        <li>{t("about.serialShell")}</li>
         <li>WSL</li>
       </ul>
-      <p className="about-features">工作区管理 · 交互控制台 · 运行历史</p>
+      <p className="about-features">{t("about.features")}</p>
       {isTauri() && <UpdateSection autoCheckNonce={autoCheckNonce} />}
       <form method="dialog" className="dialog-actions">
-        <button type="submit" disabled={updating} autoFocus>关闭</button>
+        <button type="submit" disabled={updating} autoFocus>{t("about.close")}</button>
       </form>
     </dialog>
   );

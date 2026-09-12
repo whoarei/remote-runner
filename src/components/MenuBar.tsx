@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { isTauri } from "@tauri-apps/api/core";
 import { errorMessage } from "../api";
 import { isAutostartEnabled, setAutostartEnabled } from "../autostart";
 import { requestQuit } from "../appLifecycle";
 import { dirtyTab } from "../editorDocument";
+import { loadLanguagePreference, setLanguage, type LanguagePreference } from "../i18n/language";
 import { useAppStore } from "../store";
 import { emptyDevice, deviceLabel } from "./DeviceDialog";
 import { openWorkspace } from "../workspacePicker";
@@ -74,7 +76,14 @@ function MenuItem({ entry, close }: { entry: MenuEntry; close: () => void }) {
 }
 
 export function MenuBar({ onAbout, onCheckUpdate }: { onAbout: () => void; onCheckUpdate: () => void }) {
+  const { t } = useTranslation();
   const [openMenu, setOpenMenu] = useState<number | null>(null);
+  // 本地持有偏好状态：切到「跟随系统」且解析结果不变时 changeLanguage 不触发重渲染
+  const [languagePreference, setLanguagePreference] = useState<LanguagePreference>(() => loadLanguagePreference());
+  const chooseLanguage = (preference: LanguagePreference) => {
+    setLanguagePreference(preference);
+    setLanguage(preference);
+  };
   const barRef = useRef<HTMLDivElement>(null);
   const layout = useAppStore((state) => state.layout);
   const setLayout = useAppStore((state) => state.setLayout);
@@ -98,7 +107,7 @@ export function MenuBar({ onAbout, onCheckUpdate }: { onAbout: () => void; onChe
     setAutostart(next);
     setAutostartEnabled(next).catch((error) => {
       setAutostart(!next);
-      useAppStore.setState({ editorError: `开机自启动设置失败：${errorMessage(error)}` });
+      useAppStore.setState({ editorError: t("menu.autostartFailed", { message: errorMessage(error) }) });
     });
   };
 
@@ -120,71 +129,80 @@ export function MenuBar({ onAbout, onCheckUpdate }: { onAbout: () => void; onChe
 
   const menus: TopMenu[] = [
     {
-      label: "文件",
+      label: t("menu.file"),
       entries: [
-        { label: "打开工作区…", onSelect: () => void openWorkspace() },
+        { label: t("menu.openWorkspace"), onSelect: () => void openWorkspace() },
         {
-          label: "最近的工作区",
+          label: t("menu.recentWorkspaces"),
           disabled: recentWorkspaces.length === 0,
           children: recentWorkspaces.length > 0
             ? recentWorkspaces.map((dir) => ({ label: dir, onSelect: () => void openWorkspace(dir) }))
-            : [{ label: "（无最近记录）", disabled: true }],
+            : [{ label: t("menu.noRecent"), disabled: true }],
         },
         { type: "separator" },
-        { label: "添加设备…", onSelect: () => useAppStore.getState().openDeviceDialog(emptyDevice()) },
+        { label: t("menu.addDevice"), onSelect: () => useAppStore.getState().openDeviceDialog(emptyDevice()) },
         {
-          label: "编辑设备",
+          label: t("menu.editDevice"),
           disabled: devices.length === 0,
           children: devices.length > 0
             ? devices.map((device) => ({
                 label: deviceLabel(device),
                 onSelect: () => useAppStore.getState().openDeviceDialog({ ...device }),
               }))
-            : [{ label: "（无设备）", disabled: true }],
+            : [{ label: t("menu.noDevices"), disabled: true }],
         },
         { type: "separator" },
-        { label: "保存文件", disabled: !dirty, onSelect: () => void useAppStore.getState().saveFile() },
-        { label: "关闭文件", disabled: !openFile || fileBusy, onSelect: () => void useAppStore.getState().closeFile() },
+        { label: t("menu.saveFile"), disabled: !dirty, onSelect: () => void useAppStore.getState().saveFile() },
+        { label: t("menu.closeFile"), disabled: !openFile || fileBusy, onSelect: () => void useAppStore.getState().closeFile() },
         { type: "separator" },
-        { type: "checkbox", label: "开机自启动", disabled: !isTauri(), checked: autostart, onSelect: toggleAutostart },
+        { type: "checkbox", label: t("menu.autostart"), disabled: !isTauri(), checked: autostart, onSelect: toggleAutostart },
         { type: "separator" },
         {
-          label: "退出",
+          label: t("menu.quit"),
           disabled: !isTauri(),
           onSelect: () => void requestQuit(),
         },
       ],
     },
     {
-      label: "视图",
+      label: t("menu.view"),
       entries: [
-        { type: "checkbox", label: "侧栏", checked: layout.sidebarVisible, onSelect: () => setLayout({ sidebarVisible: !layout.sidebarVisible }) },
-        { type: "checkbox", label: "工作区面板", checked: layout.workspaceVisible, onSelect: () => setLayout({ workspaceVisible: !layout.workspaceVisible, sidebarVisible: true }) },
-        { type: "checkbox", label: "历史面板", checked: layout.historyVisible, onSelect: () => setLayout({ historyVisible: !layout.historyVisible, sidebarVisible: true }) },
-        { type: "checkbox", label: "控制台面板", checked: layout.consoleVisible, onSelect: () => setLayout({ consoleVisible: !layout.consoleVisible }) },
+        { type: "checkbox", label: t("menu.sidebar"), checked: layout.sidebarVisible, onSelect: () => setLayout({ sidebarVisible: !layout.sidebarVisible }) },
+        { type: "checkbox", label: t("menu.workspacePanel"), checked: layout.workspaceVisible, onSelect: () => setLayout({ workspaceVisible: !layout.workspaceVisible, sidebarVisible: true }) },
+        { type: "checkbox", label: t("menu.historyPanel"), checked: layout.historyVisible, onSelect: () => setLayout({ historyVisible: !layout.historyVisible, sidebarVisible: true }) },
+        { type: "checkbox", label: t("menu.consolePanel"), checked: layout.consoleVisible, onSelect: () => setLayout({ consoleVisible: !layout.consoleVisible }) },
         { type: "separator" },
         {
-          label: "侧栏位置",
+          label: t("menu.sidebarPosition"),
           children: [
-            { type: "checkbox", label: "左侧", checked: layout.sidebarPosition === "left", onSelect: () => setLayout({ sidebarPosition: "left" }) },
-            { type: "checkbox", label: "右侧", checked: layout.sidebarPosition === "right", onSelect: () => setLayout({ sidebarPosition: "right" }) },
+            { type: "checkbox", label: t("menu.left"), checked: layout.sidebarPosition === "left", onSelect: () => setLayout({ sidebarPosition: "left" }) },
+            { type: "checkbox", label: t("menu.right"), checked: layout.sidebarPosition === "right", onSelect: () => setLayout({ sidebarPosition: "right" }) },
           ],
         },
         { type: "separator" },
-        { label: "重置布局", onSelect: () => resetLayout() },
+        {
+          label: t("menu.language"),
+          children: [
+            { type: "checkbox", label: t("menu.followSystem"), checked: languagePreference === "system", onSelect: () => chooseLanguage("system") },
+            { type: "checkbox", label: "中文", checked: languagePreference === "zh", onSelect: () => chooseLanguage("zh") },
+            { type: "checkbox", label: "English", checked: languagePreference === "en", onSelect: () => chooseLanguage("en") },
+          ],
+        },
+        { type: "separator" },
+        { label: t("menu.resetLayout"), onSelect: () => resetLayout() },
       ],
     },
     {
-      label: "帮助",
+      label: t("menu.help"),
       entries: [
-        { label: "检查更新…", disabled: !isTauri(), onSelect: onCheckUpdate },
-        { label: "关于 Remote Runner…", onSelect: onAbout },
+        { label: t("menu.checkUpdate"), disabled: !isTauri(), onSelect: onCheckUpdate },
+        { label: t("menu.about"), onSelect: onAbout },
       ],
     },
   ];
 
   return (
-    <div className="menubar" role="menubar" aria-label="应用菜单" ref={barRef}>
+    <div className="menubar" role="menubar" aria-label={t("menu.ariaLabel")} ref={barRef}>
       {menus.map((menu, index) => (
         <div className="menubar-entry" key={menu.label}>
           <button

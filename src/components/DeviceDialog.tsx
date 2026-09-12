@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, DeviceProfile } from "../api";
 import { useAppStore } from "../store";
 
@@ -21,6 +22,7 @@ export const deviceLabel = (d: DeviceProfile) =>
   `${d.name} (${d.transport === "wsl" ? `WSL · ${d.wsl?.distribution}` : d.transport === "serial" ? `${d.serial?.port} · ${d.serial?.baud_rate}` : `${d.username}@${d.host}`})`;
 
 export function DeviceDialog() {
+  const { t } = useTranslation();
   const editing = useAppStore((s) => s.editingDevice);
   const loadDevices = useAppStore((s) => s.loadDevices);
   const closeDeviceDialog = useAppStore((s) => s.closeDeviceDialog);
@@ -32,12 +34,12 @@ export function DeviceDialog() {
 
   const refreshPorts = async () => {
     try { setPorts(await api.listSerialPorts()); }
-    catch (e) { setTestResult(`串口枚举失败: ${e}`); }
+    catch (e) { setTestResult(t("device.enumPortsFailed", { message: String(e) })); }
   };
 
   const refreshDistributions = async () => {
     try { setDistributions(await api.listWslDistributions()); }
-    catch (e) { setTestResult(`WSL 发行版枚举失败: ${e}`); }
+    catch (e) { setTestResult(t("device.enumDistrosFailed", { message: String(e) })); }
   };
 
   // 对话框打开时重置测试结果，并按连接方式预取端口 / 发行版列表
@@ -61,39 +63,39 @@ export function DeviceDialog() {
       await api.saveDevice(d);
       await loadDevices();
       closeDeviceDialog();
-    } catch (e) { setTestResult(`保存失败: ${e}`); }
+    } catch (e) { setTestResult(t("device.saveFailed", { message: String(e) })); }
   };
 
   const remove = async (d: DeviceProfile) => {
-    if (!confirm(`Delete device "${d.name}"?`)) return;
+    if (!confirm(t("device.deleteConfirm", { name: d.name }))) return;
     await api.deleteDevice(d.id);
     await loadDevices();
     closeDeviceDialog();
   };
 
   const test = async (d: DeviceProfile) => {
-    setTestResult("connecting...");
+    setTestResult(t("device.connecting"));
     setTesting(true);
     try {
       setTestResult(await api.testDevice(d));
     } catch (e) {
-      setTestResult(`FAILED: ${e}`);
+      setTestResult(t("device.testFailed", { message: String(e) }));
     } finally { setTesting(false); }
   };
 
   return (
     <div className="modal-mask" onClick={closeDeviceDialog}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>{editing.id ? "编辑设备" : "添加设备"}</h3>
+        <h3>{editing.id ? t("device.editTitle") : t("device.addTitle")}</h3>
         <label>
-          名称
+          {t("device.name")}
           <input
             value={editing.name}
             onChange={(e) => update({ name: e.target.value })}
           />
         </label>
         <label>
-          连接方式
+          {t("device.transport")}
           <select value={editing.transport} disabled={testing} onChange={(e) => {
             const transport = e.target.value as DeviceProfile["transport"];
             update({ transport, serial: editing.serial ?? { port: "", baud_rate: 115200 }, wsl: editing.wsl ?? { distribution: "", user: "" } });
@@ -102,39 +104,39 @@ export function DeviceDialog() {
             if (transport === "wsl") void refreshDistributions();
           }}>
             <option value="ssh">SSH</option>
-            <option value="serial">串口</option>
-            <option value="wsl">WSL（本机发行版）</option>
+            <option value="serial">{t("device.serial")}</option>
+            <option value="wsl">{t("device.wsl")}</option>
           </select>
         </label>
         {editing.transport === "wsl" ? <>
           <label>
-            WSL 发行版
-            <input list="wsl-distributions" value={editing.wsl?.distribution ?? ""} placeholder="例如 Ubuntu-24.04"
+            {t("device.wslDistro")}
+            <input list="wsl-distributions" value={editing.wsl?.distribution ?? ""} placeholder={t("device.wslDistroPlaceholder")}
               onChange={(e) => update({ wsl: { distribution: e.target.value, user: editing.wsl?.user ?? "" } })} />
             <datalist id="wsl-distributions">{distributions.map((name) => <option key={name} value={name} />)}</datalist>
-            <button type="button" onClick={refreshDistributions}>刷新发行版</button>
+            <button type="button" onClick={refreshDistributions}>{t("device.refreshDistros")}</button>
           </label>
           <label>
-            Linux 用户（留空使用发行版默认用户）
-            <input value={editing.wsl?.user ?? ""} placeholder="默认用户"
+            {t("device.wslUser")}
+            <input value={editing.wsl?.user ?? ""} placeholder={t("device.wslUserPlaceholder")}
               onChange={(e) => update({ wsl: { distribution: editing.wsl?.distribution ?? "", user: e.target.value } })} />
           </label>
-          <p>直接在本机 WSL 中运行，无需 SSH。发行版需有 python3，运行 Shell 脚本还需 bash；支持 PTY 交互及 pipe 输出。工作区每次复制到 WSL，单文件上限 16 MiB，总计 64 MiB。</p>
+          <p>{t("device.wslDescription")}</p>
         </> : editing.transport === "serial" ? <>
           <label>
-            串口
-            <input list="serial-ports" value={editing.serial?.port ?? ""} placeholder="COM8 或 /dev/ttyUSB0"
+            {t("device.serialPort")}
+            <input list="serial-ports" value={editing.serial?.port ?? ""} placeholder={t("device.serialPlaceholder")}
               onChange={(e) => update({ serial: { port: e.target.value, baud_rate: editing.serial?.baud_rate ?? 115200 } })} />
             <datalist id="serial-ports">{ports.map((port) => <option key={port} value={port} />)}</datalist>
-            <button type="button" onClick={refreshPorts}>刷新端口</button>
+            <button type="button" onClick={refreshPorts}>{t("device.refreshPorts")}</button>
           </label>
           <label>
-            波特率
+            {t("device.baudRate")}
             <input type="number" min={1} max={4000000} list="serial-baud-rates" value={editing.serial?.baud_rate ?? 115200}
               onChange={(e) => update({ serial: { port: editing.serial?.port ?? "", baud_rate: Number(e.target.value) } })} />
             <datalist id="serial-baud-rates">{[9600, 57600, 115200, 230400, 460800, 921600, 1500000].map((rate) => <option key={rate} value={rate} />)}</datalist>
           </label>
-          <p>8N1，无流控。设备串口需已登录 Linux shell；测试连接会执行探测命令。同一串口一次只能运行一个任务。</p>
+          <p>{t("device.serialDescription")}</p>
         </> : <>
         <label>
           Host
@@ -145,7 +147,7 @@ export function DeviceDialog() {
           />
         </label>
         <label>
-          端口
+          {t("device.port")}
           <input
             type="number"
             value={editing.port}
@@ -153,14 +155,14 @@ export function DeviceDialog() {
           />
         </label>
         <label>
-          用户名
+          {t("device.username")}
           <input
             value={editing.username}
             onChange={(e) => update({ username: e.target.value })}
           />
         </label>
         <label>
-          认证方式
+          {t("device.auth")}
           <select
             value={editing.auth.type}
             onChange={(e) =>
@@ -172,13 +174,13 @@ export function DeviceDialog() {
               })
             }
           >
-            <option value="key">SSH 密钥 / agent</option>
-            <option value="password">密码</option>
+            <option value="key">{t("device.authKey")}</option>
+            <option value="password">{t("device.authPassword")}</option>
           </select>
         </label>
         {editing.auth.type === "password" && (
           <label>
-            密码
+            {t("device.password")}
             <input
               type="password"
               value={editing.auth.password}
@@ -188,7 +190,7 @@ export function DeviceDialog() {
         )}
         {editing.auth.type === "key" && (
           <label>
-            私钥路径（留空 = agent / 默认密钥）
+            {t("device.keyPath")}
             <input
               value={editing.auth.key_path ?? ""}
               onChange={(e) =>
@@ -199,17 +201,17 @@ export function DeviceDialog() {
         )}
         </>}
         <label>
-          {editing.transport === "wsl" ? "WSL 工作区根目录" : "远程工作区根目录"}
+          {editing.transport === "wsl" ? t("device.workspaceRootWsl") : t("device.workspaceRootRemote")}
           <input
             value={editing.workspace_root}
             onChange={(e) => update({ workspace_root: e.target.value })}
           />
         </label>
         <div className="modal-actions">
-          <button disabled={testing} onClick={() => test(editing)}>测试连接</button>
+          <button disabled={testing} onClick={() => test(editing)}>{t("device.testConnection")}</button>
           {editing.id && (
             <button className="danger" onClick={() => remove(editing)}>
-              删除
+              {t("device.delete")}
             </button>
           )}
           <button
@@ -217,7 +219,7 @@ export function DeviceDialog() {
             disabled={testing || !editing.name || (editing.transport === "wsl" ? !editing.wsl?.distribution.trim() : editing.transport === "serial" ? !editing.serial?.port || !editing.serial?.baud_rate : !editing.host)}
             onClick={() => save(editing)}
           >
-            保存
+            {t("device.save")}
           </button>
         </div>
         {testResult && <pre className="test-result">{testResult}</pre>}

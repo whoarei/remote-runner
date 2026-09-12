@@ -1,5 +1,6 @@
 import type { OutputBuffer } from "./outputBuffer";
 import type { RunStatus } from "./api";
+import i18n from "./i18n";
 
 interface ConsoleWriter {
   reset(): void;
@@ -31,12 +32,12 @@ export function createConsoleReplay(term: ConsoleWriter, snapshot: () => {
       term.reset();
       next = buffer.start;
       gaps = buffer.gaps ?? 0;
-      message = "[输出超过接收能力，部分输出已丢失；任务状态已重新同步]\r\n";
+      message = `${i18n.t("replay.gap")}\r\n`;
     }
     if (buffer && next < buffer.start) {
       term.reset();
       next = buffer.start;
-      message = "[较早的输出已超过单任务或总缓存上限，仅显示保留的输出]\r\n";
+      message = `${i18n.t("replay.trimmed")}\r\n`;
     }
     const chunk = buffer?.chunks[next - buffer.start];
     const data = message || chunk;

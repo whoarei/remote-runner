@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { api, DeviceProfile, RunEvent, RunStatus, RunRequest, WorkspaceEntryKind, errorMessage, AppUpdateInfo } from "./api";
 import { anyDirty, ChangeChoice, dirtyTab, EditorLanguage, EditorTab, inferLanguage, neighborAfterClose, uploadBusy, withTab } from "./editorDocument";
+import i18n from "./i18n";
 import { appendOutput, MAX_TOTAL_OUTPUT_BYTES, OutputBuffer, trimOutput } from "./outputBuffer";
 import { DEFAULT_RUN_DRAFT, isActiveRun, newestStatus, RunDraft } from "./runState";
 import { loadWorkspaceHistory, rememberWorkspace, saveWorkspaceHistory } from "./workspaceHistory";
@@ -91,9 +92,9 @@ let workspaceSequence = 0;
 function workspaceChangeBlocker(
   state: Pick<AppState, "workspaceDir" | "workspaceMutating" | "saving" | "starting" | "guarding" | "runs">,
 ): string | null {
-  if (!state.workspaceDir) return "请先选择工作区";
-  if (state.workspaceMutating || state.saving || state.starting || state.guarding) return "请等待当前操作完成";
-  if (uploadBusy(state)) return "任务正在准备、同步或停止，请稍后修改工作区";
+  if (!state.workspaceDir) return i18n.t("workspace.selectFirst");
+  if (state.workspaceMutating || state.saving || state.starting || state.guarding) return i18n.t("workspace.busy");
+  if (uploadBusy(state)) return i18n.t("workspace.uploadBusy");
   return null;
 }
 
@@ -375,7 +376,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!dirtyTab(tab)) return true;
     if (!state.workspaceDir) return false;
     if (uploadBusy(state)) {
-      set({ editorError: "任务正在准备、同步或停止，请稍后保存" });
+      set({ editorError: i18n.t("run.saveBlocked") });
       return false;
     }
     set({ saving: true, editorError: null });
@@ -466,13 +467,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   startRun: async (request) => {
     const state = get();
-    if (state.updating) throw new Error("正在升级，请等待应用重新启动");
-    if (state.loading || state.saving || state.starting || state.guarding) throw new Error("请等待当前文件操作完成");
-    if ((request.workspace_dir ?? null) !== state.workspaceDir) throw new Error("工作区已改变，请重新运行");
-    if (!request.device_id || (request.kind === "command" ? !request.command?.trim() : !request.entry)) throw new Error("请选择设备并填写入口或命令");
+    if (state.updating) throw new Error(i18n.t("run.errorUpdating"));
+    if (state.loading || state.saving || state.starting || state.guarding) throw new Error(i18n.t("run.errorFileBusy"));
+    if ((request.workspace_dir ?? null) !== state.workspaceDir) throw new Error(i18n.t("run.errorWorkspaceChanged"));
+    if (!request.device_id || (request.kind === "command" ? !request.command?.trim() : !request.entry)) throw new Error(i18n.t("run.errorMissingTarget"));
     set({ starting: true });
     try {
-      if (!await get().saveAllDirty() || anyDirty(get())) throw new Error(get().editorError ?? "保存未完成，未启动任务");
+      if (!await get().saveAllDirty() || anyDirty(get())) throw new Error(get().editorError ?? i18n.t("run.errorSaveIncomplete"));
       const runId = await api.runScript({ ...request, ...get().consoleSize });
       // Events may arrive before invoke returns. Fetch status only when missing;
       // use preparing as a fallback so no save slips through before the first event.

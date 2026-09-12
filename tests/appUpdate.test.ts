@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { checkForAvailableUpdate, directUpdateAction, formatBytes, formatDownloadProgress, installWithProgress, updateButtonLabel, updateInstallBlocker } from "../src/updateStatus";
 import type { AppUpdateInfo } from "../src/api";
+import i18n from "../src/i18n";
+
+// 文案断言基于中文字典，固定测试语言避免随运行环境漂移
+test.before(async () => { await i18n.changeLanguage("zh"); });
 
 test("installation protects unsaved files and all active run phases", () => {
   const state = { openTabs: [{ fileContent: "saved", savedContent: "saved" }], loading: false, saving: false, starting: false, guarding: false, workspaceMutating: false, runs: {} };

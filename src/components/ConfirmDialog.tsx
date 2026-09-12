@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 
 export interface ConfirmRequest {
   title: string;
@@ -12,6 +13,7 @@ export interface ConfirmRequest {
 
 /** 通用确认对话框：由调用方持有请求状态，取消 / Esc / 关闭按钮走同一回调。 */
 export function ConfirmDialog({ request }: { request: ConfirmRequest | null }) {
+  const { t } = useTranslation();
   const dialog = useRef<HTMLDialogElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -39,7 +41,7 @@ export function ConfirmDialog({ request }: { request: ConfirmRequest | null }) {
       <h3 id="confirm-title">{request?.title}</h3>
       <p>{request?.message}</p>
       <div className="dialog-actions">
-        <button ref={cancel} onClick={close}>取消</button>
+        <button ref={cancel} onClick={close}>{t("dialog.cancel")}</button>
         <button className={request?.danger ? "danger" : "primary"} onClick={() => request?.onConfirm()}>
           {request?.confirmLabel}
         </button>

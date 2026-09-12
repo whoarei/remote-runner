@@ -4,6 +4,10 @@ import React, { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { api, RunStatus } from "../src/api";
 import { useAppStore } from "../src/store";
+import i18n from "../src/i18n";
+
+// 文案断言基于中文字典，固定测试语言避免随运行环境漂移
+test.before(async () => { await i18n.changeLanguage("zh"); });
 import { EditorTab, inferLanguage } from "../src/editorDocument";
 import { DEFAULT_RUN_DRAFT } from "../src/runState";
 import { WorkspacePanel } from "../src/components/WorkspacePanel";

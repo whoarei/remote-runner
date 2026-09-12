@@ -4,6 +4,10 @@ import { api, type TerminalStatus } from "../src/api";
 import { useTerminalStore, terminalActive } from "../src/terminalStore";
 import { terminalInput, readTerminal } from "../src/terminalIO";
 import { useAppStore } from "../src/store";
+import i18n from "../src/i18n";
+
+// 文案断言基于中文字典，固定测试语言避免随运行环境漂移
+test.before(async () => { await i18n.changeLanguage("zh"); });
 
 const status = (id: string, state: TerminalStatus["state"] = "connected"): TerminalStatus =>
   ({ session_id: id, device_name: id, state, exit_code: null, error: null });

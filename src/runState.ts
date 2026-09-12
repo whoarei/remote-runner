@@ -1,7 +1,14 @@
 import type { RunStatus } from "./api";
+import i18n from "./i18n";
 
 export const isActiveRun = (run: RunStatus) =>
   ["preparing", "syncing", "starting", "running", "stopping"].includes(run.state);
+
+/** 运行状态的界面展示名；后端未知状态原样显示。CSS class 仍用原始 state。 */
+export function runStateLabel(state: string): string {
+  const key = `state.${state}`;
+  return i18n.exists(key) ? i18n.t(key) : state;
+}
 
 const phase = ["preparing", "syncing", "starting", "running", "stopping"];
 export function newestStatus(current: RunStatus | undefined, incoming: RunStatus): RunStatus {

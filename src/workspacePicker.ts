@@ -1,5 +1,6 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { errorMessage } from "./api";
+import i18n from "./i18n";
 import { useAppStore } from "./store";
 
 /**
@@ -11,11 +12,11 @@ export async function openWorkspace(recentDir?: string): Promise<void> {
     const { workspaceDir, recentWorkspaces, setWorkspaceDir } = useAppStore.getState();
     const dir = recentDir ?? await open({
       directory: true,
-      title: "选择脚本工作区目录",
+      title: i18n.t("workspace.pickDirTitle"),
       defaultPath: workspaceDir ?? recentWorkspaces[0],
     });
     if (typeof dir === "string") await setWorkspaceDir(dir);
   } catch (error) {
-    useAppStore.setState({ editorError: `无法打开工作区：${errorMessage(error)}` });
+    useAppStore.setState({ editorError: i18n.t("workspace.openFailed", { message: errorMessage(error) }) });
   }
 }

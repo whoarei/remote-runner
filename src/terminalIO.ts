@@ -1,4 +1,5 @@
 import { base64ToBytes, type TerminalRead } from "./api";
+import i18n from "./i18n";
 
 /** Drain only after xterm parsed the previous bytes. Hidden terminals use the same pump. */
 export function readTerminal(
@@ -49,7 +50,7 @@ export function terminalInput(send: (text: string) => Promise<void>, error: (err
   return {
     send(text: string) {
       if (disposed || !text) return;
-      if (size + text.length > 64 * 1024) { error(new Error("输入过长，请分段粘贴（最多 64K 字符）")); return; }
+      if (size + text.length > 64 * 1024) { error(new Error(i18n.t("terminal.inputTooLong"))); return; }
       size += text.length;
       let chunk = "";
       for (const char of text) {
