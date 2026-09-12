@@ -153,7 +153,7 @@ export function RunToolbar() {
           ■ Stop
         </button>
       ) : (
-        <button className="primary" disabled={busy || editorBusy || !selectedDeviceId} onClick={run}>
+        <button className="run-start" disabled={busy || editorBusy || !selectedDeviceId} onClick={run}>
           {dirty ? "▶ 保存并运行" : "▶ Run"}
         </button>
       )}

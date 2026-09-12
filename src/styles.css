@@ -702,6 +702,16 @@ button.danger {
   color: #fff;
 }
 
+/* 低调的运行按钮：与工具栏默认按钮一致，仅用绿色文字作语义提示 */
+button.run-start {
+  color: #7fbf7f;
+}
+
+button.run-start:hover:not(:disabled) {
+  color: #9fd89f;
+  border-color: #4a6b4a;
+}
+
 button:disabled {
   opacity: 0.5;
   cursor: default;
