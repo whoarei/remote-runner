@@ -78,3 +78,15 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: --bundles nsis --target x86_64-pc-windows-msvc
+
+      - name: Upload portable exe to release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = '${{ steps.meta.outputs.tag }}'
+          $version = '${{ steps.meta.outputs.version }}'
+          $exe = "src-tauri/target/x86_64-pc-windows-msvc/release/remote-runner.exe"
+          $portable = "Remote.Runner_${version}_x64-portable.exe"
+          Copy-Item $exe $portable
+          gh release upload $tag $portable --clobber
