@@ -9,6 +9,7 @@ import fcntl
 import json
 import os
 import platform
+import pwd
 import select
 import signal
 import struct
@@ -71,6 +72,24 @@ def main():
 
     def kill_group(sig):
         if process is not None:
+            if request and request.get("terminal"):
+                # Interactive shells create a new process group for each job.
+                # Restrict cleanup to this helper's child session, never the distro.
+                groups = {process.pid}
+                for name in os.listdir("/proc"):
+                    if name.isdigit():
+                        try:
+                            pid = int(name)
+                            if os.getsid(pid) == process.pid:
+                                groups.add(os.getpgid(pid))
+                        except (ProcessLookupError, PermissionError):
+                            pass
+                for group in groups:
+                    try:
+                        os.killpg(group, sig)
+                    except ProcessLookupError:
+                        pass
+                return
             try:
                 os.killpg(process.pid, sig)
             except ProcessLookupError:
@@ -139,6 +158,8 @@ def main():
                         stop("user")
                     elif kind == "init" and not initialized:
                         request = message
+                        if request.get("terminal") and (request.get("remote") is not None or request.get("mode") != "pty"):
+                            raise ValueError("terminal requires PTY and no workspace")
                         initialized = True
                         remote = request.get("remote")
                         if remote is not None:
@@ -197,6 +218,12 @@ def main():
                         else:
                             os.chdir(os.path.expanduser("~"))
                         env = dict(os.environ, TERM="xterm-256color")
+                        if request.get("terminal"):
+                            shell = pwd.getpwuid(os.getuid()).pw_shell or "/bin/sh"
+                            env["SHELL"] = shell
+                            argv = [shell, "-i"]
+                        else:
+                            argv = ["/bin/sh", "-c", request["command"]]
                         if request["mode"] == "pty":
                             master, slave = os.openpty()
                             resize(request["cols"], request["rows"])
@@ -204,7 +231,7 @@ def main():
                                 os.setsid()
                                 fcntl.ioctl(0, termios.TIOCSCTTY, 0)
                             try:
-                                process = subprocess.Popen(["/bin/sh", "-c", request["command"]],
+                                process = subprocess.Popen(argv,
                                     stdin=slave, stdout=slave, stderr=slave, env=env, preexec_fn=setup_terminal)
                             finally:
                                 os.close(slave)

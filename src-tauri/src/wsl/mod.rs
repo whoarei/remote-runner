@@ -1,5 +1,6 @@
 //! Direct local WSL transport. No network socket, SSH server, or credentials.
 pub mod filesync;
+pub mod terminal;
 
 use crate::device::WslConfig;
 use crate::error::{Result, RunnerError};

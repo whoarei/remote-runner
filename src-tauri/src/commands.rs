@@ -4,6 +4,7 @@ use crate::runner::{RunManager, RunStatus};
 use std::path::PathBuf;
 
 pub struct AppState {
+    pub terminal_manager: crate::terminal::TerminalManager,
     pub run_manager: RunManager,
     pub device_store: DeviceStore,
     pub config_dir: PathBuf,
@@ -228,4 +229,59 @@ pub fn list_running_runs(state: tauri::State<'_, AppState>) -> Result<Vec<RunSta
 #[tauri::command]
 pub fn get_run_history(state: tauri::State<'_, AppState>) -> Result<Vec<RunStatus>> {
     Ok(state.run_manager.history())
+}
+
+// ---------- 独立终端（不经过运行/工作区状态） ----------
+#[tauri::command]
+pub fn open_terminal(
+    state: tauri::State<'_, AppState>,
+    updates: tauri::State<'_, crate::update::UpdateState>,
+    device_id: String,
+    cols: u32,
+    rows: u32,
+) -> Result<crate::terminal::Status> {
+    let _gate = updates.allow_run()?;
+    state.terminal_manager.open(
+        state.device_store.get(&device_id)?,
+        state.config_dir.clone(),
+        cols,
+        rows,
+    )
+}
+
+#[tauri::command]
+pub fn read_terminal(
+    state: tauri::State<'_, AppState>,
+    session_id: String,
+) -> Result<crate::terminal::Read> {
+    state.terminal_manager.read(&session_id)
+}
+
+#[tauri::command]
+pub fn send_terminal_input(
+    state: tauri::State<'_, AppState>,
+    session_id: String,
+    data: String,
+) -> Result<()> {
+    state.terminal_manager.input(&session_id, data)
+}
+
+#[tauri::command]
+pub fn resize_terminal(
+    state: tauri::State<'_, AppState>,
+    session_id: String,
+    cols: u32,
+    rows: u32,
+) -> Result<()> {
+    state.terminal_manager.resize(&session_id, cols, rows)
+}
+
+#[tauri::command]
+pub async fn close_terminal(state: tauri::State<'_, AppState>, session_id: String) -> Result<()> {
+    state.terminal_manager.close(&session_id).await
+}
+
+#[tauri::command]
+pub async fn close_all_terminals(state: tauri::State<'_, AppState>) -> Result<()> {
+    state.terminal_manager.close_all().await
 }

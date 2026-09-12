@@ -110,6 +110,222 @@ fn python(code: &str) -> Command {
     command
 }
 
+async fn terminal_output(
+    rx: &mut mpsc::UnboundedReceiver<crate::terminal::Event>,
+    expected: &str,
+) -> String {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        let mut text = String::new();
+        while let Some(event) = rx.recv().await {
+            if let crate::terminal::Event::Output(data) = event {
+                text.push_str(&String::from_utf8_lossy(&data));
+                if text.contains(expected) {
+                    return text;
+                }
+            }
+        }
+        panic!("terminal closed before {expected:?}: {text:?}");
+    })
+    .await
+    .unwrap_or_else(|_| panic!("terminal did not print {expected:?}"))
+}
+
+#[tokio::test]
+#[cfg_attr(
+    windows,
+    ignore = "requires an explicitly selected local WSL distribution"
+)]
+async fn terminal_shell_preserves_state_ctrl_c_resize_and_exit() {
+    use crate::terminal::{Control, Event as TE};
+    let (tx, mut controls) = mpsc::channel(32);
+    let (_cancel, mut cancel) = tokio::sync::watch::channel(false);
+    let (events, mut rx) = mpsc::unbounded_channel();
+    let task = tokio::spawn(async move {
+        terminal::execute_with_command(
+            python(HELPER),
+            80,
+            24,
+            &mut controls,
+            &mut cancel,
+            |event| {
+                events.send(event).unwrap();
+                Ok(())
+            },
+        )
+        .await
+    });
+    assert!(matches!(
+        tokio::time::timeout(Duration::from_secs(30), rx.recv())
+            .await
+            .unwrap(),
+        Some(TE::Connected)
+    ));
+    // Split markers in source so echoed commands cannot satisfy output assertions.
+    tx.send(Control::Input(
+        b"stty -echo; PS1=''; cd /tmp; export RR_TERMINAL_TEST=kept; printf '__RR_%s__\\n' ready\n"
+            .to_vec(),
+    ))
+    .await
+    .unwrap();
+    terminal_output(&mut rx, "__RR_ready__").await;
+    tx.send(Control::Resize {
+        cols: 113,
+        rows: 37,
+    })
+    .await
+    .unwrap();
+    tx.send(Control::Input(b"printf '__RR_STATE:%s:%s__\\n' \"$PWD\" \"$RR_TERMINAL_TEST\"; stty size; printf '__RR_%s__\\n' sized\n".to_vec())).await.unwrap();
+    let output = terminal_output(&mut rx, "__RR_sized__").await;
+    assert!(output.contains("__RR_STATE:/tmp:kept__"), "{output}");
+    assert!(output.contains("37 113"), "{output}");
+    tx.send(Control::Input(
+        b"printf '__RR_%s__\\n' sleeping; sleep 60\n".to_vec(),
+    ))
+    .await
+    .unwrap();
+    terminal_output(&mut rx, "__RR_sleeping__").await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    tx.send(Control::Input(vec![3])).await.unwrap();
+    tx.send(Control::Input(b"printf '__RR_%s__\\n' survived\n".to_vec()))
+        .await
+        .unwrap();
+    terminal_output(&mut rx, "__RR_survived__").await;
+    tx.send(Control::Input(b"exit 7\n".to_vec())).await.unwrap();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(10), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
+        Some(7)
+    );
+}
+
+#[tokio::test]
+#[cfg_attr(
+    windows,
+    ignore = "requires an explicitly selected local WSL distribution"
+)]
+async fn terminal_close_cleans_job_control_groups_and_other_sessions_survive() {
+    use crate::terminal::{Control, Event as TE};
+    let (tx, mut controls) = mpsc::channel(32);
+    let (cancel_tx, mut cancel) = tokio::sync::watch::channel(false);
+    let (events, mut rx) = mpsc::unbounded_channel();
+    let task = tokio::spawn(async move {
+        terminal::execute_with_command(
+            python(HELPER),
+            80,
+            24,
+            &mut controls,
+            &mut cancel,
+            |event| {
+                events.send(event).unwrap();
+                Ok(())
+            },
+        )
+        .await
+    });
+    assert!(matches!(
+        tokio::time::timeout(Duration::from_secs(30), rx.recv())
+            .await
+            .unwrap(),
+        Some(TE::Connected)
+    ));
+    tx.send(Control::Input(
+        b"stty -echo; PS1=''; printf '__RR_%s__\\n' ready\n".to_vec(),
+    ))
+    .await
+    .unwrap();
+    terminal_output(&mut rx, "__RR_ready__").await;
+    // A second helper is a separate session and must remain usable.
+    let mut other = Bridge::launch(python(HELPER)).await.unwrap();
+    other
+        .request(
+            json!({"type":"init", "terminal":true, "mode":"pty", "cols":80,"rows":24,"timeout":0}),
+        )
+        .await
+        .unwrap();
+    other.send(json!({"type":"start"})).await.unwrap();
+    assert!(matches!(other.next().await.unwrap(), Message::Started));
+    tx.send(Control::Input(
+        b"sleep 60 & printf '__RR_%s:%s__\\n' SID \"$$\"; printf '__RR_%s__\\n' jobs; sleep 60\n"
+            .to_vec(),
+    ))
+    .await
+    .unwrap();
+    let output = terminal_output(&mut rx, "__RR_jobs__").await;
+    let sid: u32 = output
+        .split("__RR_SID:")
+        .nth(1)
+        .unwrap()
+        .split("__")
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    cancel_tx.send(true).unwrap();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(12), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
+        None
+    );
+    // Check the child's entire session, including foreground/background groups, excluding reaped zombies.
+    let probe = format!("import os\nalive=[]\nfor n in os.listdir('/proc'):\n if n.isdigit():\n  try:\n   if os.getsid(int(n)) == {sid} and open('/proc/'+n+'/stat').read().rsplit(')',1)[1].split()[0] != 'Z': alive.append(n)\n  except (ProcessLookupError,FileNotFoundError): pass\nassert not alive, alive\n");
+    assert!(python(&probe).output().await.unwrap().status.success());
+    other
+        .send(json!({"type":"input", "data":STANDARD.encode(b"exit 9\n")}))
+        .await
+        .unwrap();
+    let code = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Message::Exit { code, .. } = other.next().await.unwrap() {
+                break code;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(code, Some(9));
+    other.wait().await.unwrap();
+}
+
+#[tokio::test]
+#[cfg_attr(
+    windows,
+    ignore = "requires an explicitly selected local WSL distribution"
+)]
+async fn terminal_eof_is_failure_and_cancel_before_launch_starts_nothing() {
+    let (_tx, mut controls) = mpsc::channel(32);
+    let (_cancel_tx, mut cancel) = tokio::sync::watch::channel(false);
+    let fake = "import json,sys\nprint(json.dumps({'type':'ready','version':1,'info':'fake'}),flush=True)\nsys.stdin.readline()\nprint(json.dumps({'type':'ack'}),flush=True)\nsys.stdin.readline()\nprint(json.dumps({'type':'started'}),flush=True)\n";
+    assert!(terminal::execute_with_command(
+        python(fake),
+        80,
+        24,
+        &mut controls,
+        &mut cancel,
+        |_| Ok(())
+    )
+    .await
+    .is_err());
+    let (_cancel_tx, mut cancel) = tokio::sync::watch::channel(true);
+    let result = terminal::execute_with_command(
+        Command::new("must-not-exist-terminal-test"),
+        80,
+        24,
+        &mut controls,
+        &mut cancel,
+        |_| panic!("must not start"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result, None);
+}
+
 async fn run(
     req: &RunRequest,
     on_event: impl FnMut(Event),

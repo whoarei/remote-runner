@@ -544,6 +544,27 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 .about-dialog button:focus-visible { outline: 2px solid #8fa9e8; outline-offset: 3px; }
 
 /* ---------- footer / console ---------- */
+[hidden] { display: none !important; }
+.console-panel, .run-page, .terminal-page { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+.console-tabs-bar { display: flex; align-items: stretch; flex-shrink: 0; min-height: 34px; background: #1b1c21; border-bottom: 1px solid #34353d; }
+.console-tabs { display: flex; flex: 1; min-width: 0; overflow-x: auto; }
+.console-tab { display: flex; flex-shrink: 0; }
+.console-tabs button, .console-collapse, .terminal-add { border: 0; border-radius: 0; background: transparent; white-space: nowrap; }
+.console-tabs button[role="tab"] { padding: 7px 12px; border-bottom: 2px solid transparent; color: #9fa2b0; }
+.console-tabs button[aria-selected="true"] { color: #e5eafa; background: #242630; border-bottom-color: #8fa9e8; }
+.console-tabs button:focus-visible { outline: 1px solid #8fa9e8; outline-offset: -3px; }
+.terminal-tab-close { color: #999daa; padding: 3px 7px; }
+.terminal-tab-close:hover { color: #fff; background: #3b3036; }
+.terminal-add, .console-collapse { padding: 4px 12px; }
+.terminal-toolbar, .terminal-picker { display: flex; align-items: center; gap: 10px; padding: 6px 12px; flex-shrink: 0; background: #1e1f24; border-bottom: 1px solid #2a2b30; }
+.terminal-picker { flex-wrap: wrap; }
+.terminal-hint { flex: 1; color: #8c909e; font-size: 12px; }
+.terminal-status { font-size: 12px; }
+.terminal-connected { color: #9bcea5; }
+.terminal-failed { color: #eda4a4; }
+.terminal-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; display: inline-block; margin-right: 7px; vertical-align: middle; }
+.terminal-number { color: #777e92; font-size: 11px; margin-left: 4px; }
+.terminal-error { color: #eda4a4; background: #302328; padding: 6px 12px; font-size: 12px; overflow-wrap: anywhere; max-height: 72px; overflow: auto; }
 .app-footer {
   flex-shrink: 0;
   display: flex;

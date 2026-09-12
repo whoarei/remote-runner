@@ -3,8 +3,8 @@ import { onRunEvents, api } from "./api";
 import { useAppStore } from "./store";
 import { DeviceBar } from "./components/DeviceBar";
 import { WorkspacePanel } from "./components/WorkspacePanel";
-import { RunToolbar } from "./components/RunToolbar";
-import { RunConsole } from "./components/RunConsole";
+import { ConsolePanel } from "./components/ConsolePanel";
+import { useTerminalStore } from "./terminalStore";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { UnsavedDialog } from "./components/UnsavedDialog";
 import { TitleBar } from "./components/TitleBar";
@@ -54,7 +54,10 @@ export default function App() {
       if (state.loading || state.saving || state.starting || state.guarding || state.updating) return;
       closing = true;
       try {
-        if (await state.confirmUnsaved()) await getCurrentWindow().destroy();
+        if (await state.confirmUnsaved()) {
+          await useTerminalStore.getState().closeAll();
+          await getCurrentWindow().destroy();
+        }
       } catch (error) { useAppStore.setState({ editorError: errorMessage(error) }); }
       finally { closing = false; }
     }) : Promise.resolve(() => {});
@@ -149,9 +152,9 @@ export default function App() {
           <section className="center">
             <Suspense fallback={<div className="editor empty">正在加载编辑器…</div>}><Editor /></Suspense>
           </section>
-          {layout.consoleVisible && (
+          {(
             <>
-              {!layout.consoleCollapsed && (
+              {layout.consoleVisible && !layout.consoleCollapsed && (
                 <SplitHandle
                   direction="horizontal"
                   label="调整控制台高度"
@@ -159,9 +162,9 @@ export default function App() {
                   onReset={() => setLayout({ consoleHeight: DEFAULT_LAYOUT.consoleHeight })}
                 />
               )}
-              <footer className="app-footer" style={layout.consoleCollapsed ? undefined : { height: layout.consoleHeight }}>
-                <RunToolbar />
-                <RunConsole
+              <footer className="app-footer" hidden={!layout.consoleVisible} style={layout.consoleCollapsed ? undefined : { height: layout.consoleHeight }}>
+                <ConsolePanel
+                  visible={layout.consoleVisible}
                   collapsed={layout.consoleCollapsed}
                   onToggleCollapse={() => setLayout({ consoleCollapsed: !layout.consoleCollapsed })}
                 />

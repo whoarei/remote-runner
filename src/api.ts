@@ -45,6 +45,16 @@ export interface RunStatus {
   ended_at: string | null;
 }
 
+export interface TerminalStatus {
+  session_id: string;
+  device_name: string;
+  state: "connecting" | "connected" | "closing" | "exited" | "failed" | "closed";
+  exit_code: number | null;
+  error: string | null;
+}
+
+export interface TerminalRead { status: TerminalStatus; data: string }
+
 export type RunEvent =
   | { type: "output"; run_id: string; stream: string; data: string }
   | { type: "status"; status: RunStatus }
@@ -89,6 +99,12 @@ export function errorMessage(error: unknown): string {
 }
 
 export const api = {
+  openTerminal: (deviceId: string, cols = 80, rows = 24) => invoke<TerminalStatus>("open_terminal", { deviceId, cols, rows }),
+  readTerminal: (sessionId: string) => invoke<TerminalRead>("read_terminal", { sessionId }),
+  sendTerminalInput: (sessionId: string, data: string) => invoke<void>("send_terminal_input", { sessionId, data }),
+  resizeTerminal: (sessionId: string, cols: number, rows: number) => invoke<void>("resize_terminal", { sessionId, cols, rows }),
+  closeTerminal: (sessionId: string) => invoke<void>("close_terminal", { sessionId }),
+  closeAllTerminals: () => invoke<void>("close_all_terminals"),
   listDevices: () => invoke<DeviceProfile[]>("list_devices"),
   saveDevice: (device: DeviceProfile) =>
     invoke<DeviceProfile>("save_device", { device }),

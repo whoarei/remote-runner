@@ -6,6 +6,7 @@ pub mod process;
 pub mod runner;
 pub mod serial;
 pub mod ssh;
+pub mod terminal;
 pub mod update;
 pub mod workspace;
 pub mod workspace_upload;
@@ -39,6 +40,7 @@ pub fn run() {
             let (event_tx, event_rx) = events::channel();
 
             let state = AppState {
+                terminal_manager: terminal::TerminalManager::default(),
                 run_manager: RunManager::new(&config_dir, event_tx),
                 device_store: DeviceStore::new(&config_dir),
                 config_dir,
@@ -69,6 +71,12 @@ pub fn run() {
             commands::list_running_runs,
             commands::get_run_history,
             commands::drain_run_events,
+            commands::open_terminal,
+            commands::read_terminal,
+            commands::send_terminal_input,
+            commands::resize_terminal,
+            commands::close_terminal,
+            commands::close_all_terminals,
             update::check_app_update,
             update::install_app_update,
         ])

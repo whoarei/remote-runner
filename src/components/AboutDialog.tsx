@@ -8,6 +8,7 @@ import appIcon from "../../src-tauri/icons/128x128.png";
 import { api, errorMessage, type AppUpdateInfo } from "../api";
 import { formatDownloadProgress, installWithProgress, updateInstallBlocker, type UpdateProgress } from "../updateStatus";
 import { useAppStore } from "../store";
+import { useTerminalStore, terminalActive } from "../terminalStore";
 
 const RELEASES_URL = "https://github.com/whoarei/remote-runner/releases/latest";
 
@@ -30,7 +31,9 @@ function UpdateSection({ autoCheckNonce }: UpdateSectionProps) {
   const [phase, setPhase] = useState<UpdatePhase>({ kind: "idle" });
   const busyRef = useRef(false);
   const mounted = useRef(true);
-  const blocker = useAppStore(updateInstallBlocker);
+  const runBlocker = useAppStore(updateInstallBlocker);
+  const terminalBusy = useTerminalStore((s) => s.tabs.some(terminalActive));
+  const blocker = runBlocker || (terminalBusy ? "请先关闭活动终端，再安装更新。" : null);
 
   const check = useCallback(async () => {
     if (busyRef.current) return;
@@ -52,7 +55,7 @@ function UpdateSection({ autoCheckNonce }: UpdateSectionProps) {
 
   const install = useCallback(async (info: AppUpdateInfo) => {
     if (busyRef.current) return;
-    const blocked = updateInstallBlocker(useAppStore.getState());
+    const blocked = updateInstallBlocker(useAppStore.getState()) || (useTerminalStore.getState().tabs.some(terminalActive) ? "请先关闭活动终端，再安装更新。" : null);
     if (blocked) { setPhase({ kind: "error", message: blocked }); return; }
     busyRef.current = true;
     useAppStore.setState({ updating: true });

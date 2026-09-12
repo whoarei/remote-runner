@@ -35,7 +35,7 @@ impl UpdateState {
             .map_err(|_| RunnerError::Update("任务正在启动或应用正在升级，请稍后重试".into()))?;
         if has_active_runs() {
             return Err(RunnerError::Update(
-                "请先停止或等待所有运行任务结束，再安装更新".into(),
+                "请先停止所有运行任务并关闭终端，再安装更新".into(),
             ));
         }
         Ok(guard)
@@ -198,7 +198,9 @@ pub async fn install_app_update(
     )?;
     let update = checked.as_ref().unwrap();
     // run_script holds the read side until the run is registered, closing the start/install race.
-    let _gate = state.begin_install(|| !runs.run_manager.list_running().is_empty())?;
+    let _gate = state.begin_install(|| {
+        !runs.run_manager.list_running().is_empty() || runs.terminal_manager.has_active()
+    })?;
     let mut downloaded = 0u64;
     let mut last_emit = Instant::now();
     let bytes = update

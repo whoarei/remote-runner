@@ -148,7 +148,7 @@ pub async fn spawn(
     })
 }
 
-async fn await_success(
+pub(super) async fn await_success(
     channel: &mut russh::Channel<russh::client::Msg>,
     pending: &mut std::collections::VecDeque<ChannelMsg>,
 ) -> Result<()> {

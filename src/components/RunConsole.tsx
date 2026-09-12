@@ -12,7 +12,7 @@ import { createConsoleReplay } from "../consoleReplay";
  * Run Console：绑定的是“远程进程”的 stdin/stdout/stderr，不是 SSH shell。
  * 折叠时终端保持挂载，仅隐藏 DOM，避免 xterm 重新附着和输出丢失。
  */
-export function RunConsole({ collapsed, onToggleCollapse }: { collapsed: boolean; onToggleCollapse: () => void }) {
+export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { collapsed: boolean; onToggleCollapse: () => void; embedded?: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -74,6 +74,7 @@ export function RunConsole({ collapsed, onToggleCollapse }: { collapsed: boolean
     replay.pump();
 
     const observer = new ResizeObserver(() => {
+      if (!containerRef.current?.clientWidth || !containerRef.current.clientHeight) return;
       fit.fit();
       useAppStore.getState().setConsoleSize(term.cols, term.rows);
       const runId = useAppStore.getState().activeRunId;
@@ -95,6 +96,10 @@ export function RunConsole({ collapsed, onToggleCollapse }: { collapsed: boolean
 
   useEffect(() => { replayRef.current?.pump(); }, [activeRunId, buffer]);
 
+  useEffect(() => {
+    if (!collapsed && containerRef.current?.clientWidth && containerRef.current.clientHeight) fitRef.current?.fit();
+  }, [collapsed]);
+
   // 状态行
 
   useEffect(() => {
@@ -106,14 +111,14 @@ export function RunConsole({ collapsed, onToggleCollapse }: { collapsed: boolean
 
   return (
     <div className="run-console">
-      <PanelTitle className="console-header" title="Run Console" collapsed={collapsed} onToggle={onToggleCollapse}>
+      {!embedded && <PanelTitle className="console-header" title="Run Console" collapsed={collapsed} onToggle={onToggleCollapse}>
         {activeRun && (
           <span className={`run-state state-${activeRun.state}`}>
             {activeRun.run_id} · {activeRun.state}
             {activeRun.exit_code != null && ` · exit=${activeRun.exit_code}`}
           </span>
         )}
-      </PanelTitle>
+      </PanelTitle>}
       <div ref={containerRef} className={`console-body${collapsed ? " collapsed" : ""}`} />
     </div>
   );
