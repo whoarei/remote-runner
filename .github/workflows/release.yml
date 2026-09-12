@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "版本标签 (例如 v0.1.0)，将基于该标签名创建 Release"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Determine release tag
+        id: meta
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            $tag = '${{ inputs.tag }}'
+          } else {
+            $tag = '${{ github.ref_name }}'
+          }
+          if ($tag -notmatch '^v\d+\.\d+\.\d+') {
+            Write-Error "Tag '$tag' 不符合 vX.Y.Z 格式"
+            exit 1
+          }
+          $version = $tag.TrimStart('v')
+          echo "tag=$tag" >> $env:GITHUB_OUTPUT
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Sync version into package.json and tauri.conf.json
+        shell: pwsh
+        run: |
+          $version = '${{ steps.meta.outputs.version }}'
+          foreach ($file in @('package.json', 'src-tauri/tauri.conf.json')) {
+            $json = Get-Content -Raw $file | ConvertFrom-Json
+            $json.version = $version
+            $json | ConvertTo-Json -Depth 32 | Set-Content -NoNewline $file
+          }
+
+      - name: Build Tauri app (exe + NSIS installer)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ steps.meta.outputs.tag }}
+          releaseName: "Remote Runner ${{ steps.meta.outputs.tag }}"
+          releaseDraft: true
+          prerelease: false
+          args: --bundles nsis --target x86_64-pc-windows-msvc
