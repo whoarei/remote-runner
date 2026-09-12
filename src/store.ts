@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { api, DeviceProfile, RunEvent, RunStatus, RunRequest, WorkspaceEntryKind, errorMessage, AppUpdateInfo } from "./api";
-import { ChangeChoice, dirtyDocument, EditorLanguage, inferLanguage, uploadBusy } from "./editorDocument";
+import { anyDirty, ChangeChoice, dirtyTab, EditorLanguage, EditorTab, inferLanguage, neighborAfterClose, uploadBusy, withTab } from "./editorDocument";
 import { appendOutput, MAX_TOTAL_OUTPUT_BYTES, OutputBuffer, trimOutput } from "./outputBuffer";
 import { DEFAULT_RUN_DRAFT, isActiveRun, newestStatus, RunDraft } from "./runState";
 import { loadWorkspaceHistory, rememberWorkspace, saveWorkspaceHistory } from "./workspaceHistory";
@@ -22,20 +22,15 @@ interface AppState {
   workspaceTree: WorkspaceTree;
   workspaceError: string | null;
   workspaceMutating: boolean;
-  openFile: string | null;
-  fileContent: string;
-  savedContent: string;
-  revision: string | null;
-  eol: "lf" | "crlf";
-  bom: boolean;
-  language: EditorLanguage;
-  documentGeneration: number;
+  /** 打开的文件标签（打开顺序即标签顺序） */
+  openTabs: EditorTab[];
+  /** 活动标签名；null 表示没有打开的文件 */
+  activeFile: string | null;
   loading: boolean;
   saving: boolean;
   starting: boolean;
   guarding: boolean;
   editorError: string | null;
-  conflict: boolean;
   changePrompt: { name: string; resolve: (choice: ChangeChoice) => void } | null;
 
   runs: Record<string, RunStatus>;
@@ -67,11 +62,17 @@ interface AppState {
   deleteWorkspaceEntry: (path: WorkspacePath) => Promise<boolean>;
   dismissWorkspaceError: () => void;
   openWorkspaceFile: (name: string) => Promise<void>;
-  editContent: (content: string) => void;
+  activateFile: (name: string) => void;
+  editContent: (name: string, content: string) => void;
   setLanguage: (language: EditorLanguage) => void;
-  saveFile: () => Promise<boolean>;
-  confirmUnsaved: () => Promise<boolean>;
+  saveFile: (name?: string) => Promise<boolean>;
+  /** 顺序保存所有脏标签；任一失败即中止并返回 false */
+  saveAllDirty: () => Promise<boolean>;
+  confirmUnsaved: (name?: string) => Promise<boolean>;
+  /** 对所有脏标签逐个确认（窗口关闭 / 切换工作区前使用） */
+  confirmAllUnsaved: () => Promise<boolean>;
   reloadFile: () => Promise<void>;
+  closeFile: (name?: string) => Promise<void>;
   startRun: (request: RunRequest) => Promise<string>;
   handleRunEvent: (ev: RunEvent) => void;
   handleRunEvents: (events: RunEvent[]) => void;
@@ -131,20 +132,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   workspaceTree: {},
   workspaceError: null,
   workspaceMutating: false,
-  openFile: null,
-  fileContent: "",
-  savedContent: "",
-  revision: null,
-  eol: "lf",
-  bom: false,
-  language: "text",
-  documentGeneration: 0,
+  openTabs: [],
+  activeFile: null,
   loading: false,
   saving: false,
   starting: false,
   guarding: false,
   editorError: null,
-  conflict: false,
   changePrompt: null,
 
   runs: {},
@@ -193,7 +187,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     ++workspaceSequence;
     // This selection owns loading cleanup as soon as it invalidates the old read.
     set({ loading: false });
-    if (!await get().confirmUnsaved() || sequence !== loadSequence) return;
+    if (!await get().confirmAllUnsaved() || sequence !== loadSequence) return;
     set({ loading: true, editorError: null, workspaceError: null });
     try {
       const workspaceTree = dir ? rootTree(await api.listWorkspaceDir(dir, WORKSPACE_ROOT)) : {};
@@ -201,8 +195,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const recentWorkspaces = dir ? rememberWorkspace(get().recentWorkspaces, dir) : get().recentWorkspaces;
       if (dir) saveWorkspaceHistory(recentWorkspaces);
       set((s) => ({ workspaceDir: dir, workspaceTree, recentWorkspaces,
-        openFile: null, fileContent: "", savedContent: "", revision: null,
-        conflict: false, documentGeneration: s.documentGeneration + 1,
+        openTabs: [], activeFile: null,
         runDraft: { ...s.runDraft, entry: "" } }));
     } catch (error) {
       if (sequence === loadSequence) set({ editorError: errorMessage(error) });
@@ -271,13 +264,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       await api.renameWorkspaceEntry(root, path, target);
       if (sequence !== workspaceSequence) return false;
-      // 同一个条目换了路径：缓存子树改键，打开的文档与入口草稿跟随移动
+      // 同一个条目换了路径：缓存子树改键，所有受影响的标签与入口草稿跟随移动
       set((s) => {
         const moved = (value: string | null) =>
           value && isWithin(value, path) ? target + value.slice(path.length) : value;
-        const openFile = moved(s.openFile);
-        return { workspaceTree: rekeySubtree(s.workspaceTree, path, target), openFile,
-          language: openFile && openFile !== s.openFile ? inferLanguage(nameOf(openFile)) : s.language,
+        const openTabs = s.openTabs.map((tab) => {
+          const name = moved(tab.name);
+          return name && name !== tab.name ? { ...tab, name, language: inferLanguage(nameOf(name)) } : tab;
+        });
+        return { workspaceTree: rekeySubtree(s.workspaceTree, path, target), openTabs,
+          activeFile: moved(s.activeFile),
           runDraft: { ...s.runDraft, entry: moved(s.runDraft.entry) ?? "" } };
       });
       await get().loadWorkspaceDir(dir);
@@ -296,21 +292,24 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (blocked) { set({ workspaceError: blocked }); return false; }
     const root = state.workspaceDir!;
     const dir = parentOf(path);
-    // 删除会连带丢掉未保存修改，先复用既有的保存 / 放弃 / 取消确认
-    if (state.openFile && isWithin(state.openFile, path) && !await get().confirmUnsaved()) return false;
+    // 删除会连带丢掉受影响标签的未保存修改，逐个复用既有的保存 / 放弃 / 取消确认
+    for (const tab of state.openTabs.filter((t) => isWithin(t.name, path))) {
+      if (!await get().confirmUnsaved(tab.name)) return false;
+    }
     const sequence = workspaceSequence;
     set({ workspaceMutating: true, workspaceError: null });
     try {
       await api.deleteWorkspaceEntry(root, path);
       if (sequence !== workspaceSequence) return false;
       set((s) => {
-        const closed = !!s.openFile && isWithin(s.openFile, path);
+        const openTabs = s.openTabs.filter((t) => !isWithin(t.name, path));
         // 入口草稿无论是否打开都要跟随删除，否则下拉框会指向已删除的文件
         const entry = s.runDraft.entry && isWithin(s.runDraft.entry, path) ? "" : s.runDraft.entry;
         const runDraft = entry === s.runDraft.entry ? s.runDraft : { ...s.runDraft, entry };
-        return { workspaceTree: dropSubtree(s.workspaceTree, path), runDraft,
-          ...(closed ? { openFile: null, fileContent: "", savedContent: "", revision: null,
-            conflict: false, documentGeneration: s.documentGeneration + 1 } : {}) };
+        const activeRemoved = !!s.activeFile && isWithin(s.activeFile, path);
+        return { workspaceTree: dropSubtree(s.workspaceTree, path), runDraft, openTabs,
+          activeFile: activeRemoved ? openTabs[0]?.name ?? null : s.activeFile,
+          ...(activeRemoved ? { editorError: null } : {}) };
       });
       await get().loadWorkspaceDir(dir);
       return true;
@@ -327,17 +326,20 @@ export const useAppStore = create<AppState>((set, get) => ({
   openWorkspaceFile: async (name) => {
     const dir = get().workspaceDir;
     if (!dir || get().saving || get().starting || get().guarding) return;
-    if (name === get().openFile && !get().loading) return;
+    // 已打开的文件只激活标签，不重新读盘
+    if (get().openTabs.some((tab) => tab.name === name)) {
+      get().activateFile(name);
+      if (get().layout.editorCollapsed) get().setLayout({ editorCollapsed: false });
+      return;
+    }
     const sequence = ++loadSequence;
-    set({ loading: false });
-    if (!await get().confirmUnsaved() || sequence !== loadSequence) return;
     set({ loading: true, editorError: null });
     try {
       const doc = await api.readWorkspaceFile(dir, name);
       if (sequence === loadSequence && get().workspaceDir === dir) {
-        set((s) => ({ openFile: name, fileContent: doc.content, savedContent: doc.content,
+        set((s) => ({ openTabs: [...s.openTabs, { name, fileContent: doc.content, savedContent: doc.content,
           revision: doc.revision, eol: doc.eol, bom: doc.bom, language: inferLanguage(name),
-          conflict: false, documentGeneration: s.documentGeneration + 1 }));
+          conflict: false, generation: 1 }], activeFile: name }));
         // 打开文件意味着要看内容，折叠中的编辑区自动展开
         if (get().layout.editorCollapsed) get().setLayout({ editorCollapsed: false });
       }
@@ -348,68 +350,118 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  editContent: (content) => {
-    if (!get().loading && !get().starting && !get().guarding) set({ fileContent: content });
+  activateFile: (name) => {
+    if (get().openTabs.some((tab) => tab.name === name)) {
+      set({ activeFile: name });
+      // 激活标签同样意味着要看内容
+      if (get().layout.editorCollapsed) get().setLayout({ editorCollapsed: false });
+    }
   },
-  setLanguage: (language) => set({ language }),
 
-  saveFile: async () => {
+  editContent: (name, content) => {
+    if (get().loading || get().starting || get().guarding) return;
+    set((s) => ({ openTabs: withTab(s.openTabs, name, (tab) => ({ ...tab, fileContent: content })) }));
+  },
+  setLanguage: (language) => {
+    const active = get().activeFile;
+    if (active) set((s) => ({ openTabs: withTab(s.openTabs, active, (tab) => ({ ...tab, language })) }));
+  },
+
+  saveFile: async (name) => {
     const state = get();
     if (state.saving || state.loading) return false;
-    if (!dirtyDocument(state)) return true;
-    if (!state.workspaceDir || !state.openFile || !state.revision) return false;
+    const tab = state.openTabs.find((t) => t.name === (name ?? state.activeFile));
+    if (!tab) return false;
+    if (!dirtyTab(tab)) return true;
+    if (!state.workspaceDir) return false;
     if (uploadBusy(state)) {
       set({ editorError: "任务正在准备、同步或停止，请稍后保存" });
       return false;
     }
     set({ saving: true, editorError: null });
     try {
-      const saved = await api.writeWorkspaceFile({ dir: state.workspaceDir, name: state.openFile,
-        content: state.fileContent, expectedRevision: state.revision, eol: state.eol, bom: state.bom });
-      if (get().documentGeneration !== state.documentGeneration) return false;
-      set({ savedContent: state.fileContent, revision: saved.revision, conflict: false });
+      const saved = await api.writeWorkspaceFile({ dir: state.workspaceDir, name: tab.name,
+        content: tab.fileContent, expectedRevision: tab.revision, eol: tab.eol, bom: tab.bom });
+      // 标签被关闭或重读后，旧响应不得覆盖新文档
+      const current = get().openTabs.find((t) => t.name === tab.name);
+      if (!current || current.generation !== tab.generation) return false;
+      set((s) => ({ openTabs: withTab(s.openTabs, tab.name, (t) =>
+        ({ ...t, savedContent: tab.fileContent, revision: saved.revision, conflict: false })) }));
       return true;
     } catch (error) {
-      set({ editorError: errorMessage(error), conflict: typeof error === "object" && error !== null && "code" in error && error.code === "conflict" });
+      const conflict = typeof error === "object" && error !== null && "code" in error && error.code === "conflict";
+      set((s) => ({ editorError: errorMessage(error),
+        openTabs: withTab(s.openTabs, tab.name, (t) => ({ ...t, conflict })) }));
       return false;
     } finally {
       set({ saving: false });
     }
   },
 
-  confirmUnsaved: async () => {
+  saveAllDirty: async () => {
+    for (const tab of get().openTabs) {
+      if (dirtyTab(tab) && !await get().saveFile(tab.name)) return false;
+    }
+    return !anyDirty(get());
+  },
+
+  confirmUnsaved: async (name) => {
     if (get().saving || get().starting || get().guarding) return false;
-    if (!dirtyDocument(get())) return true;
+    const tab = get().openTabs.find((t) => t.name === (name ?? get().activeFile));
+    if (!tab || !dirtyTab(tab)) return true;
     // Freeze input while the choice is pending, so the approved content is stable.
     set({ guarding: true });
     try {
-      const choice = await new Promise<ChangeChoice>((resolve) => set({ changePrompt: { name: get().openFile!, resolve } }));
+      const choice = await new Promise<ChangeChoice>((resolve) => set({ changePrompt: { name: tab.name, resolve } }));
       set({ changePrompt: null });
       if (choice === "cancel") return false;
       if (choice === "discard") return true;
-      return await get().saveFile() && !dirtyDocument(get());
+      return await get().saveFile(tab.name)
+        && !dirtyTab(get().openTabs.find((t) => t.name === tab.name) ?? tab);
     } finally {
       set({ guarding: false, changePrompt: null });
     }
   },
 
+  confirmAllUnsaved: async () => {
+    for (const tab of get().openTabs) {
+      if (!await get().confirmUnsaved(tab.name)) return false;
+    }
+    return true;
+  },
+
   reloadFile: async () => {
     const state = get();
-    if (!state.openFile || !state.workspaceDir || state.loading || state.saving || state.starting || state.guarding) return;
+    const tab = state.openTabs.find((t) => t.name === state.activeFile);
+    if (!tab || !state.workspaceDir || state.loading || state.saving || state.starting || state.guarding) return;
     // Reuse the same save/discard/cancel choice, preserving the buffer on read failure.
-    if (!await get().confirmUnsaved()) return;
+    if (!await get().confirmUnsaved(tab.name)) return;
     const sequence = ++loadSequence;
     set({ loading: true, editorError: null });
     try {
-      const doc = await api.readWorkspaceFile(state.workspaceDir, state.openFile);
-      if (sequence === loadSequence) set((s) => ({ fileContent: doc.content, savedContent: doc.content,
-        revision: doc.revision, eol: doc.eol, bom: doc.bom, conflict: false,
-        documentGeneration: s.documentGeneration + 1 }));
+      const doc = await api.readWorkspaceFile(state.workspaceDir, tab.name);
+      if (sequence === loadSequence) set((s) => ({ openTabs: withTab(s.openTabs, tab.name, (t) =>
+        ({ ...t, fileContent: doc.content, savedContent: doc.content, revision: doc.revision,
+          eol: doc.eol, bom: doc.bom, conflict: false, generation: t.generation + 1 })) }));
     } catch (error) {
       if (sequence === loadSequence) set({ editorError: errorMessage(error) });
     } finally {
       if (sequence === loadSequence) set({ loading: false });
     }
+  },
+
+  closeFile: async (name) => {
+    const state = get();
+    if (state.loading || state.saving || state.starting || state.guarding) return;
+    const tab = state.openTabs.find((t) => t.name === (name ?? state.activeFile));
+    if (!tab) return;
+    // 关闭会丢掉未保存修改，复用保存 / 放弃 / 取消确认
+    if (!await get().confirmUnsaved(tab.name)) return;
+    set((s) => {
+      const openTabs = s.openTabs.filter((t) => t.name !== tab.name);
+      return { openTabs, editorError: null,
+        activeFile: s.activeFile === tab.name ? neighborAfterClose(s.openTabs, tab.name, openTabs) : s.activeFile };
+    });
   },
 
   startRun: async (request) => {
@@ -420,7 +472,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!request.device_id || (request.kind === "command" ? !request.command?.trim() : !request.entry)) throw new Error("请选择设备并填写入口或命令");
     set({ starting: true });
     try {
-      if (!await get().saveFile() || dirtyDocument(get())) throw new Error(get().editorError ?? "保存未完成，未启动任务");
+      if (!await get().saveAllDirty() || anyDirty(get())) throw new Error(get().editorError ?? "保存未完成，未启动任务");
       const runId = await api.runScript({ ...request, ...get().consoleSize });
       // Events may arrive before invoke returns. Fetch status only when missing;
       // use preparing as a fallback so no save slips through before the first event.

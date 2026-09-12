@@ -37,7 +37,7 @@ interface LayoutState {
   workspaceCollapsed: boolean; // Workspace 折叠（只显示标题条），独立于显隐
   historyCollapsed: boolean;   // Run History 折叠
   consoleCollapsed: boolean;   // 控制台折叠（保留运行工具栏与标题条）
-  editorCollapsed: boolean;    // 编辑区折叠（00014 新增：保留编辑器标题条，控制台占满释放的高度）
+  editorCollapsed: boolean;    // 编辑区折叠（00015 新增：保留编辑器标题条，控制台占满释放的高度）
   sidebarWidth: number;        // 侧栏宽度 px，范围 [SIDEBAR_MIN, SIDEBAR_MAX]
   sidebarPosition: "left" | "right";
   sideSplit: number;           // Workspace 占侧栏高度比例，范围 [0.2, 0.8]
@@ -78,7 +78,8 @@ interface LayoutState {
 
 - **文件**：打开工作区… / 最近的工作区（子菜单，来自 `recentWorkspaces`，选中即打开）/
   添加设备… / 编辑设备（子菜单列出现有设备，选中即打开 DeviceDialog 编辑该设备，
-  无设备时禁用）/ 保存文件（有未保存更改时可用）/ 退出（仅 Tauri 桌面环境可用，
+  无设备时禁用）/ 保存文件（有未保存更改时可用）/ 关闭文件（00016 新增，有打开
+  文件且空闲时可用）/ 退出（仅 Tauri 桌面环境可用，
   走 `close()` 以触发未保存确认）。
 - **视图**：工作区面板 ✓ / 历史面板 ✓ / 控制台面板 ✓ / 侧栏位置（左侧 · 右侧）/
   重置布局。

@@ -4,6 +4,7 @@ import React, { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { api, RunStatus } from "../src/api";
 import { useAppStore } from "../src/store";
+import { EditorTab, inferLanguage } from "../src/editorDocument";
 import { DEFAULT_RUN_DRAFT } from "../src/runState";
 import { WorkspacePanel } from "../src/components/WorkspacePanel";
 import {
@@ -15,6 +16,11 @@ const runStatus = (state: string): RunStatus => ({
   exit_code: null, error: null, started_at: "", ended_at: null,
 });
 
+const makeTab = (name: string, content: string, saved = content, extra: Partial<EditorTab> = {}): EditorTab => ({
+  name, fileContent: content, savedContent: saved, revision: "v1", eol: "lf", bom: false,
+  language: inferLanguage(name), conflict: false, generation: 1, ...extra,
+});
+
 const treeState = () => ({
   workspaceDir: "/work",
   workspaceTree: {
@@ -23,15 +29,10 @@ const treeState = () => ({
   },
   workspaceError: null,
   workspaceMutating: false,
-  openFile: null,
-  fileContent: "",
-  savedContent: "",
-  revision: null,
-  language: "text" as const,
-  conflict: false,
+  openTabs: [] as EditorTab[],
+  activeFile: null as string | null,
   editorError: null,
   changePrompt: null,
-  documentGeneration: 1,
   loading: false,
   saving: false,
   starting: false,
@@ -76,7 +77,7 @@ test("workspace panel renders the tree with expansion state and an empty hint", 
   const previous = useAppStore.getState();
   t.after(() => useAppStore.setState(previous, true));
   t.mock.method(React, "useSyncExternalStore", (_subscribe, getSnapshot) => getSnapshot());
-  useAppStore.setState({ ...treeState(), openFile: "sub/inner.py" });
+  useAppStore.setState({ ...treeState(), activeFile: "sub/inner.py" });
   const html = renderToStaticMarkup(createElement(WorkspacePanel, { collapsed: false, onToggleCollapse: () => {} }));
   assert.match(html, />sub</);
   assert.match(html, /inner\.py/);
@@ -163,12 +164,12 @@ test("workspace changes are refused while a run is preparing, syncing, or stoppi
   assert.equal(useAppStore.getState().workspaceMutating, false);
 });
 
-test("rename moves the open document, entry draft, and cached subtree", async (t) => {
+test("rename moves every open tab, entry draft, and cached subtree", async (t) => {
   const previous = useAppStore.getState();
   t.after(() => useAppStore.setState(previous, true));
   useAppStore.setState({
-    ...treeState(), openFile: "sub/inner.py", fileContent: "print(1)", savedContent: "print(1)",
-    revision: "v1", language: "python", runDraft: { ...DEFAULT_RUN_DRAFT, entry: "sub/inner.py" },
+    ...treeState(), openTabs: [makeTab("sub/inner.py", "print(1)"), makeTab("main.py", "main")],
+    activeFile: "sub/inner.py", runDraft: { ...DEFAULT_RUN_DRAFT, entry: "sub/inner.py" },
   });
   const renamed: string[][] = [];
   t.mock.method(api, "renameWorkspaceEntry", async (_dir: string, oldName: string, newName: string) => {
@@ -179,28 +180,33 @@ test("rename moves the open document, entry draft, and cached subtree", async (t
   assert.equal(await useAppStore.getState().renameWorkspaceEntry("sub", "scripts"), true);
   assert.deepEqual(renamed, [["sub", "scripts"]]);
   const state = useAppStore.getState();
-  assert.equal(state.openFile, "scripts/inner.py");
+  assert.equal(state.activeFile, "scripts/inner.py");
+  // 受影响标签跟随移动；未受影响的标签保持不动
+  assert.deepEqual(state.openTabs.map((tab) => tab.name), ["scripts/inner.py", "main.py"]);
   assert.equal(state.runDraft.entry, "scripts/inner.py");
   assert.equal(state.workspaceTree.scripts.expanded, true);
   assert.equal(state.workspaceTree.sub, undefined);
-  // 内容未变：不重挂载编辑器，也不清空缓冲区
-  assert.equal(state.documentGeneration, 1);
-  assert.equal(state.fileContent, "print(1)");
+  // 内容未变：不重挂载编辑器（代次不变），也不清空缓冲区
+  const movedTab = state.openTabs[0];
+  assert.equal(movedTab.generation, 1);
+  assert.equal(movedTab.fileContent, "print(1)");
 
   await useAppStore.getState().renameWorkspaceEntry("scripts/inner.py", "inner.sh");
-  assert.equal(useAppStore.getState().openFile, "scripts/inner.sh");
-  assert.equal(useAppStore.getState().language, "shell");
+  const renamedTab = useAppStore.getState().openTabs[0];
+  assert.equal(renamedTab.name, "scripts/inner.sh");
+  assert.equal(renamedTab.language, "shell");
+  assert.equal(useAppStore.getState().activeFile, "scripts/inner.sh");
   // 同名重命名是空操作，不访问后端
   assert.equal(await useAppStore.getState().renameWorkspaceEntry("main.py", "main.py"), true);
   assert.equal(renamed.length, 2);
 });
 
-test("delete confirms unsaved changes, then closes the editor and drops cached subtree", async (t) => {
+test("delete confirms unsaved changes, then closes the affected tabs and drops cached subtree", async (t) => {
   const previous = useAppStore.getState();
   t.after(() => useAppStore.setState(previous, true));
   useAppStore.setState({
-    ...treeState(), openFile: "sub/inner.py", fileContent: "edits", savedContent: "saved",
-    revision: "v1", documentGeneration: 3, runDraft: { ...DEFAULT_RUN_DRAFT, entry: "sub/inner.py" },
+    ...treeState(), openTabs: [makeTab("main.py", "main"), makeTab("sub/inner.py", "edits", "saved")],
+    activeFile: "sub/inner.py", runDraft: { ...DEFAULT_RUN_DRAFT, entry: "sub/inner.py" },
   });
   const deleted: string[] = [];
   t.mock.method(api, "deleteWorkspaceEntry", async (_dir: string, name: string) => { deleted.push(name); });
@@ -211,8 +217,8 @@ test("delete confirms unsaved changes, then closes the editor and drops cached s
   useAppStore.getState().changePrompt!.resolve("cancel");
   await canceled;
   assert.deepEqual(deleted, []);
-  assert.equal(useAppStore.getState().openFile, "sub/inner.py");
-  assert.equal(useAppStore.getState().fileContent, "edits");
+  assert.equal(useAppStore.getState().activeFile, "sub/inner.py");
+  assert.equal(useAppStore.getState().openTabs[1].fileContent, "edits");
   assert.equal(useAppStore.getState().guarding, false);
 
   const confirmed = useAppStore.getState().deleteWorkspaceEntry("sub");
@@ -220,15 +226,15 @@ test("delete confirms unsaved changes, then closes the editor and drops cached s
   assert.equal(await confirmed, true);
   assert.deepEqual(deleted, ["sub"]);
   const state = useAppStore.getState();
-  assert.equal(state.openFile, null);
-  assert.equal(state.fileContent, "");
-  assert.equal(state.revision, null);
-  assert.equal(state.documentGeneration, 4);
+  // 被删子树内的标签移除，活动标签落到未受影响的标签
+  assert.deepEqual(state.openTabs.map((tab) => tab.name), ["main.py"]);
+  assert.equal(state.activeFile, "main.py");
   assert.equal(state.runDraft.entry, "");
   assert.equal(state.workspaceTree.sub, undefined);
   assert.equal(state.workspaceMutating, false);
 
   // 与打开文件无关的删除不需要确认，但会清掉指向被删文件的入口草稿
+  useAppStore.getState().closeFile("main.py");
   useAppStore.setState({ runDraft: { ...DEFAULT_RUN_DRAFT, entry: "main.py" } });
   assert.equal(await useAppStore.getState().deleteWorkspaceEntry("main.py"), true);
   assert.deepEqual(deleted, ["sub", "main.py"]);

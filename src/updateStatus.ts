@@ -1,5 +1,5 @@
 /** 升级流程的纯展示辅助（无 Tauri 依赖，便于单元测试）。 */
-import { dirtyDocument } from "./editorDocument";
+import { anyDirty, EditorTab } from "./editorDocument";
 import type { AppUpdateInfo } from "./api";
 
 export interface UpdateProgress {
@@ -9,12 +9,12 @@ export interface UpdateProgress {
 }
 
 export function updateInstallBlocker(state: {
-  openFile: string | null; fileContent: string; savedContent: string;
+  openTabs: Pick<EditorTab, "fileContent" | "savedContent">[];
   loading: boolean; saving: boolean; starting: boolean; guarding: boolean; workspaceMutating: boolean;
   runs: Record<string, { state: string }>;
 }): string | null {
   if (state.loading || state.saving || state.starting || state.guarding || state.workspaceMutating) return "请等待当前文件或任务操作完成。";
-  if (dirtyDocument(state)) return "请先保存编辑器中的修改，再安装更新。";
+  if (anyDirty(state)) return "请先保存编辑器中的修改，再安装更新。";
   if (Object.values(state.runs).some((run) => ["preparing", "syncing", "running", "stopping"].includes(run.state))) return "请先停止或等待所有运行任务结束，再安装更新。";
   return null;
 }

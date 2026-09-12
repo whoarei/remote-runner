@@ -11,6 +11,8 @@ import { createConsoleReplay } from "../src/consoleReplay";
 
 const status = (id: string, state = "exited"): RunStatus => ({ run_id: id, state, label: id, device_name: "test",
   exit_code: state === "exited" ? 0 : null, error: null, started_at: "2026-09-12T00:00:00Z", ended_at: state === "exited" ? "2026-09-12T00:00:01Z" : null });
+const mainTab = (fileContent = "edits", savedContent = "disk") => ({ name: "main.py", fileContent, savedContent,
+  revision: "v1", eol: "lf" as const, bom: false, language: "python" as const, conflict: false, generation: 1 });
 function setup(t: test.TestContext) {
   const old = useAppStore.getState();
   t.after(() => useAppStore.setState(old, true));
@@ -18,32 +20,33 @@ function setup(t: test.TestContext) {
   // hydration path; actual subscriptions are verified separately below.
   t.mock.method(React, "useSyncExternalStore", (_subscribe, getSnapshot) => getSnapshot());
   t.mock.method(console, "warn", () => {});
-  useAppStore.setState({ workspaceDir: "/work", openFile: "main.py", fileContent: "edits", savedContent: "disk", revision: "v1",
+  useAppStore.setState({ workspaceDir: "/work", openTabs: [mainTab()], activeFile: "main.py",
     loading: false, saving: false, starting: false, guarding: false, runs: {}, history: [], outputBuffers: {}, activeRunId: null });
   return useAppStore.getState();
 }
 
-test("canceling a newer file/workspace selection releases loading and preserves edits", async (t) => {
-  for (const workspace of [false, true]) {
-    const s = setup(t);
-    let finish!: (value: { content: string; revision: string; eol: "lf"; bom: boolean }) => void;
-    t.mock.method(api, "readWorkspaceFile", () => new Promise((resolve) => { finish = resolve; }));
-    const first = s.openWorkspaceFile("a.py");
-    useAppStore.getState().changePrompt!.resolve("discard");
-    for (let i = 0; i < 5; i++) await Promise.resolve();
-    assert.equal(useAppStore.getState().loading, true);
-    const second = workspace ? s.setWorkspaceDir("/elsewhere") : s.openWorkspaceFile("b.py");
-    useAppStore.getState().changePrompt!.resolve("cancel");
-    await second;
-    finish({ content: "stale read", revision: "v2", eol: "lf", bom: false });
-    await first;
-    assert.equal(useAppStore.getState().loading, false);
-    assert.equal(useAppStore.getState().fileContent, "edits");
-    s.editContent("can type again");
-    assert.equal(useAppStore.getState().fileContent, "can type again");
-    t.mock.method(api, "writeWorkspaceFile", async () => ({ revision: "v3" }));
-    assert.equal(await s.saveFile(), true);
-  }
+test("canceling a workspace switch invalidates the in-flight read and preserves edits", async (t) => {
+  const s = setup(t);
+  let finish!: (value: { content: string; revision: string; eol: "lf"; bom: boolean }) => void;
+  t.mock.method(api, "readWorkspaceFile", () => new Promise((resolve) => { finish = resolve; }));
+  const first = s.openWorkspaceFile("a.py");
+  await Promise.resolve();
+  assert.equal(useAppStore.getState().loading, true);
+  // 切换工作区作废旧读取；脏标签选择取消则工作区不变
+  const second = s.setWorkspaceDir("/elsewhere");
+  useAppStore.getState().changePrompt!.resolve("cancel");
+  await second;
+  assert.equal(useAppStore.getState().workspaceDir, "/work");
+  finish({ content: "stale read", revision: "v2", eol: "lf", bom: false });
+  await first;
+  assert.equal(useAppStore.getState().loading, false);
+  assert.equal(useAppStore.getState().openTabs.some((tab) => tab.name === "a.py"), false);
+  const main = useAppStore.getState().openTabs.find((tab) => tab.name === "main.py")!;
+  assert.equal(main.fileContent, "edits");
+  s.editContent("main.py", "can type again");
+  assert.equal(useAppStore.getState().openTabs.find((tab) => tab.name === "main.py")!.fileContent, "can type again");
+  t.mock.method(api, "writeWorkspaceFile", async () => ({ revision: "v3" }));
+  assert.equal(await s.saveFile(), true);
 });
 
 test("running tasks remain selectable and stoppable while viewing completed history", (t) => {
@@ -62,7 +65,7 @@ test("running tasks remain selectable and stoppable while viewing completed hist
 
 test("run drafts survive panel remount and layout reset; workspace switch clears only entry", async (t) => {
   const s = setup(t);
-  useAppStore.setState({ fileContent: "disk" });
+  useAppStore.setState({ openTabs: [mainTab("disk", "disk")] });
   s.setRunDraft({ mode: "command", entry: "other.py", command: "echo retained", argsText: "a b", consoleMode: "pipe", timeoutSecs: 42 });
   s.setLayout({ consoleVisible: false });
   s.resetLayout();

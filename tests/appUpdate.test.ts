@@ -4,9 +4,9 @@ import { checkForAvailableUpdate, directUpdateAction, formatBytes, formatDownloa
 import type { AppUpdateInfo } from "../src/api";
 
 test("installation protects unsaved files and all active run phases", () => {
-  const state = { openFile: "main.py", fileContent: "saved", savedContent: "saved", loading: false, saving: false, starting: false, guarding: false, workspaceMutating: false, runs: {} };
+  const state = { openTabs: [{ fileContent: "saved", savedContent: "saved" }], loading: false, saving: false, starting: false, guarding: false, workspaceMutating: false, runs: {} };
   assert.equal(updateInstallBlocker(state), null);
-  assert.match(updateInstallBlocker({ ...state, fileContent: "edited" })!, /保存/);
+  assert.match(updateInstallBlocker({ ...state, openTabs: [{ fileContent: "edited", savedContent: "saved" }] })!, /保存/);
   for (const flag of ["loading", "saving", "starting", "guarding", "workspaceMutating"]) assert.ok(updateInstallBlocker({ ...state, [flag]: true }));
   for (const phase of ["preparing", "syncing", "running", "stopping"]) assert.ok(updateInstallBlocker({ ...state, runs: { run: { state: phase } } }));
   assert.equal(updateInstallBlocker({ ...state, runs: { run: { state: "exited" } } }), null);

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { errorMessage } from "../api";
-import { dirtyDocument } from "../editorDocument";
+import { anyDirty } from "../editorDocument";
 import { useAppStore } from "../store";
 import { startOneClickUpdate } from "../updateFlow";
 import { updateButtonLabel, type UpdateButtonPhase } from "../updateStatus";
@@ -16,7 +16,7 @@ function reportWindowError(error: unknown) {
 export function TitleBar({ closeReady, onAbout, onCheckUpdate }: { closeReady: boolean; onAbout: () => void; onCheckUpdate: () => void }) {
   const workspaceDir = useAppStore((state) => state.workspaceDir);
   const availableUpdate = useAppStore((state) => state.availableUpdate);
-  const dirty = useAppStore(dirtyDocument);
+  const dirty = useAppStore(anyDirty);
   const [maximized, setMaximized] = useState(false);
   const [focused, setFocused] = useState(true);
   const [updatePhase, setUpdatePhase] = useState<UpdateButtonPhase | null>(null);

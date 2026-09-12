@@ -1,4 +1,4 @@
-# 00014 文件编辑区可折叠
+# 00015 文件编辑区可折叠
 
 日期：2026-09-12
 状态：已实现
@@ -29,6 +29,9 @@
 旧数据缺该字段时自动回落 `false`。
 
 ### 折叠交互（`src/components/Editor.tsx`）
+
+（00017 多标签改造后：折叠 chevron 移到 `.editor-tabs` 标签条左端，标签条在折叠时
+保持可见，可继续切换 / 关闭标签；激活或打开标签会自动展开。以下为首版设计。）
 
 - 折叠入口是 `.editor-title` 标题条内文件名左侧的 chevron 按钮
   （`.editor-collapse`，`aria-expanded` + 「折叠/展开编辑区」aria-label）。

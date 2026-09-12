@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { api, inferKind, RunRequest, ScriptKind } from "../api";
 import { useAppStore } from "../store";
-import { dirtyDocument } from "../editorDocument";
+import { anyDirty } from "../editorDocument";
 import { isActiveRun } from "../runState";
 import { collectScripts } from "../workspaceTree";
 import { deviceLabel } from "./DeviceDialog";
@@ -14,18 +14,18 @@ export function RunToolbar() {
     selectDevice,
     workspaceDir,
     workspaceTree,
-    openFile,
+    activeFile,
     activeRunId,
     runs,
   } = useAppStore(useShallow((s) => ({ selectedDeviceId: s.selectedDeviceId, devices: s.devices,
     selectDevice: s.selectDevice,
-    workspaceDir: s.workspaceDir, workspaceTree: s.workspaceTree, openFile: s.openFile,
+    workspaceDir: s.workspaceDir, workspaceTree: s.workspaceTree, activeFile: s.activeFile,
     activeRunId: s.activeRunId, runs: s.runs })));
 
   const { mode, entry, argsText, command, consoleMode, timeoutSecs } = useAppStore((s) => s.runDraft);
   const setDraft = useAppStore((s) => s.setRunDraft);
   const [busy, setBusy] = useState(false);
-  const dirty = useAppStore(dirtyDocument);
+  const dirty = useAppStore(anyDirty);
   const editorBusy = useAppStore((s) => s.loading || s.saving || s.starting || s.guarding);
   const isSerial = devices.find((device) => device.id === selectedDeviceId)?.transport === "serial";
   const effectiveConsoleMode = isSerial ? "pty" : consoleMode;
@@ -36,7 +36,7 @@ export function RunToolbar() {
     ["preparing", "syncing", "starting", "running", "stopping"].includes(activeRun.state);
 
 
-  const effectiveEntry = entry || openFile || "";
+  const effectiveEntry = entry || activeFile || "";
 
   const run = async () => {
     if (!selectedDeviceId) {

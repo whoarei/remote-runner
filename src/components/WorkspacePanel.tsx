@@ -136,7 +136,7 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
     disabled,
   } = useAppStore(useShallow((s) => ({
     workspaceDir: s.workspaceDir, workspaceTree: s.workspaceTree, workspaceError: s.workspaceError,
-    openFile: s.openFile,
+    openFile: s.activeFile,
     disabled: s.saving || s.starting || s.guarding || s.workspaceMutating,
   })));
   const [menu, setMenu] = useState<MenuState | null>(null);

@@ -1,14 +1,48 @@
 export type EditorLanguage = "python" | "shell" | "text";
 export type ChangeChoice = "save" | "discard" | "cancel";
 
+/** 一个打开的文件标签：工作区相对路径即标签身份，generation 驱动编辑器 remount */
+export interface EditorTab {
+  name: string;
+  fileContent: string;
+  savedContent: string;
+  revision: string;
+  eol: "lf" | "crlf";
+  bom: boolean;
+  language: EditorLanguage;
+  conflict: boolean;
+  generation: number;
+}
+
 export function inferLanguage(name: string): EditorLanguage {
   if (/\.py$/i.test(name)) return "python";
   if (/\.(sh|bash)$/i.test(name)) return "shell";
   return "text";
 }
 
-export function dirtyDocument(state: { openFile: string | null; fileContent: string; savedContent: string }): boolean {
-  return state.openFile !== null && state.fileContent !== state.savedContent;
+export function dirtyTab(tab: Pick<EditorTab, "fileContent" | "savedContent">): boolean {
+  return tab.fileContent !== tab.savedContent;
+}
+
+export function anyDirty(state: { openTabs: Pick<EditorTab, "fileContent" | "savedContent">[] }): boolean {
+  return state.openTabs.some(dirtyTab);
+}
+
+/** 按名更新标签，保持数组身份稳定（无变化时返回原数组） */
+export function withTab(tabs: EditorTab[], name: string, update: (tab: EditorTab) => EditorTab): EditorTab[] {
+  const index = tabs.findIndex((tab) => tab.name === name);
+  if (index < 0) return tabs;
+  const next = update(tabs[index]);
+  if (next === tabs[index]) return tabs;
+  const copy = tabs.slice();
+  copy[index] = next;
+  return copy;
+}
+
+/** 关闭标签后的活动标签：优先右侧邻居，否则左侧，都没有则 null */
+export function neighborAfterClose(tabs: EditorTab[], closing: string, remaining: EditorTab[]): string | null {
+  const index = tabs.findIndex((tab) => tab.name === closing);
+  return remaining[Math.min(Math.max(index, 0), remaining.length - 1)]?.name ?? null;
 }
 
 export function uploadBusy(state: { runs: Record<string, { state: string }> }): boolean {

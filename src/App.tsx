@@ -12,7 +12,7 @@ import { AboutDialog } from "./components/AboutDialog";
 import { SplitHandle } from "./components/SplitHandle";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@tauri-apps/api/core";
-import { dirtyDocument } from "./editorDocument";
+import { anyDirty } from "./editorDocument";
 import { errorMessage } from "./api";
 import { clampSidebarWidth, clampConsoleHeight, clampSideSplit, DEFAULT_LAYOUT } from "./layoutState";
 import { checkForAvailableUpdate } from "./updateStatus";
@@ -42,7 +42,7 @@ export default function App() {
 
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
-      if (dirtyDocument(useAppStore.getState())) { event.preventDefault(); event.returnValue = ""; }
+      if (anyDirty(useAppStore.getState())) { event.preventDefault(); event.returnValue = ""; }
     };
     window.addEventListener("beforeunload", beforeUnload);
     let closing = false;
@@ -54,7 +54,7 @@ export default function App() {
       if (state.loading || state.saving || state.starting || state.guarding || state.updating) return;
       closing = true;
       try {
-        if (await state.confirmUnsaved()) {
+        if (await state.confirmAllUnsaved()) {
           await useTerminalStore.getState().closeAll();
           await getCurrentWindow().destroy();
         }

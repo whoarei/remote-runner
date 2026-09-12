@@ -4,7 +4,7 @@ import { appendOutput, MAX_OUTPUT_BYTES } from "../src/outputBuffer";
 import { useAppStore } from "../src/store";
 import { api } from "../src/api";
 import { loadWorkspaceHistory } from "../src/workspaceHistory";
-import { dirtyDocument, inferLanguage } from "../src/editorDocument";
+import { anyDirty, dirtyTab, EditorTab, inferLanguage } from "../src/editorDocument";
 
 test("output buffers stay bounded and retain an absolute replay position", () => {
   const first = appendOutput(undefined, new Uint8Array(MAX_OUTPUT_BYTES));
@@ -66,10 +66,10 @@ test("recent workspaces persist successful opens, reorder repeats, and survive f
   assert.ok(!recent.includes("/workspace/0"));
   assert.deepEqual(loadWorkspaceHistory(), recent);
 
-  useAppStore.setState({ openFile: "main.py", fileContent: "print('hello')", savedContent: "print('hello')" });
+  useAppStore.setState({ openTabs: [makeTab("main.py", "print('hello')")], activeFile: "main.py" });
   const beforeFailure = useAppStore.getState();
   await assert.rejects(setWorkspaceDir("/missing"), /Directory no longer exists/);
-  assert.equal(useAppStore.getState().fileContent, beforeFailure.fileContent);
+  assert.equal(useAppStore.getState().openTabs, beforeFailure.openTabs);
   assert.equal(useAppStore.getState().workspaceDir, beforeFailure.workspaceDir);
   assert.deepEqual(loadWorkspaceHistory(), recent);
 
@@ -96,9 +96,14 @@ function deferred<T>() {
 }
 
 const diskDocument = (content: string) => ({ content, revision: `revision-${content}`, eol: "lf" as const, bom: false });
-const editorState = () => ({ workspaceDir: "/work", openFile: "main.py", fileContent: "original", savedContent: "original",
-  revision: "v1", loading: false, saving: false, starting: false, guarding: false, changePrompt: null,
-  editorError: null, conflict: false, runs: {}, documentGeneration: 1 });
+const makeTab = (name: string, content: string, saved = content, extra: Partial<EditorTab> = {}): EditorTab => ({
+  name, fileContent: content, savedContent: saved, revision: "v1", eol: "lf", bom: false,
+  language: inferLanguage(name), conflict: false, generation: 1, ...extra,
+});
+const editorState = () => ({ workspaceDir: "/work", openTabs: [makeTab("main.py", "original")], activeFile: "main.py" as string | null,
+  loading: false, saving: false, starting: false, guarding: false, changePrompt: null,
+  editorError: null, runs: {} });
+const tabNamed = (name: string) => useAppStore.getState().openTabs.find((t) => t.name === name);
 
 test("latest file selection wins including stale failures and cross-workspace reads", async (t) => {
   t.mock.method(console, "warn", () => {});
@@ -115,8 +120,10 @@ test("latest file selection wins including stale failures and cross-workspace re
   await second;
   a.reject(new Error("stale failure"));
   await first;
-  assert.equal(useAppStore.getState().openFile, "b.sh");
-  assert.equal(useAppStore.getState().language, "shell");
+  // 迟到的失败不会留下标签，也不报错误；b.sh 正常打开并激活
+  assert.deepEqual(useAppStore.getState().openTabs.map((tab) => tab.name), ["main.py", "b.sh"]);
+  assert.equal(useAppStore.getState().activeFile, "b.sh");
+  assert.equal(tabNamed("b.sh")!.language, "shell");
   assert.equal(useAppStore.getState().editorError, null);
   const late = deferred<ReturnType<typeof diskDocument>>();
   t.mock.method(api, "readWorkspaceFile", () => late.promise);
@@ -127,7 +134,8 @@ test("latest file selection wins including stale failures and cross-workspace re
   late.resolve(diskDocument("old workspace"));
   await oldRead;
   assert.equal(useAppStore.getState().workspaceDir, "/new");
-  assert.equal(useAppStore.getState().openFile, null);
+  assert.deepEqual(useAppStore.getState().openTabs, []);
+  assert.equal(useAppStore.getState().activeFile, null);
 });
 
 test("save preserves newer edits, serializes writes, and undo to baseline clears dirty", async (t) => {
@@ -143,63 +151,115 @@ test("save preserves newer edits, serializes writes, and undo to baseline clears
     return pending.promise;
   });
   const state = useAppStore.getState();
-  state.editContent("saved snapshot");
+  state.editContent("main.py", "saved snapshot");
   const save = state.saveFile();
   assert.equal(await state.saveFile(), false);
-  state.editContent("new typing");
+  state.editContent("main.py", "new typing");
   pending.resolve({ revision: "v2" });
   assert.equal(await save, true);
   assert.equal(calls, 1);
-  assert.equal(useAppStore.getState().savedContent, "saved snapshot");
-  assert.equal(useAppStore.getState().fileContent, "new typing");
-  assert.equal(dirtyDocument(useAppStore.getState()), true);
-  state.editContent("saved snapshot");
-  assert.equal(dirtyDocument(useAppStore.getState()), false);
+  assert.equal(tabNamed("main.py")!.savedContent, "saved snapshot");
+  assert.equal(tabNamed("main.py")!.fileContent, "new typing");
+  assert.equal(dirtyTab(tabNamed("main.py")!), true);
+  state.editContent("main.py", "saved snapshot");
+  assert.equal(dirtyTab(tabNamed("main.py")!), false);
 });
 
-test("switch guard handles cancel, discard with failed read, and save failure without losing buffer", async (t) => {
+test("close guard handles cancel and save failure without losing buffer; reload discards", async (t) => {
   const previous = useAppStore.getState();
   t.after(() => useAppStore.setState(previous, true));
-  useAppStore.setState({ ...editorState(), fileContent: "my edits" });
+  useAppStore.setState({ ...editorState(), openTabs: [makeTab("main.py", "my edits", "original")] });
   t.mock.method(api, "readWorkspaceFile", async () => { throw new Error("missing file"); });
   t.mock.method(api, "writeWorkspaceFile", async () => { throw { code: "conflict", message: "external change" }; });
   const state = useAppStore.getState();
-  for (const choice of ["cancel", "discard", "save"] as const) {
-    const switching = state.openWorkspaceFile("other.py");
+  for (const choice of ["cancel", "save"] as const) {
+    const closing = state.closeFile();
     assert.ok(useAppStore.getState().changePrompt);
-    state.editContent("ignored while confirming");
+    state.editContent("main.py", "ignored while confirming");
     useAppStore.getState().changePrompt!.resolve(choice);
-    await switching;
-    assert.equal(useAppStore.getState().openFile, "main.py");
-    assert.equal(useAppStore.getState().fileContent, "my edits");
+    await closing;
+    assert.equal(useAppStore.getState().activeFile, "main.py");
+    assert.equal(tabNamed("main.py")!.fileContent, "my edits");
     assert.equal(useAppStore.getState().guarding, false);
   }
-  assert.equal(useAppStore.getState().conflict, true);
+  // 保存失败（冲突）后标签保留并标记冲突
+  assert.equal(tabNamed("main.py")!.conflict, true);
+  // 放弃修改：标签关闭
+  const closing = state.closeFile();
+  useAppStore.getState().changePrompt!.resolve("discard");
+  await closing;
+  assert.deepEqual(useAppStore.getState().openTabs, []);
+  assert.equal(useAppStore.getState().activeFile, null);
+  // 重新打开后 reload 用磁盘内容替换（放弃当前修改）
+  useAppStore.setState({ openTabs: [makeTab("main.py", "my edits", "original", { conflict: true })], activeFile: "main.py" });
   t.mock.method(api, "readWorkspaceFile", async () => diskDocument("external"));
   const reload = state.reloadFile();
   useAppStore.getState().changePrompt!.resolve("discard");
   await reload;
-  assert.equal(useAppStore.getState().fileContent, "external");
-  assert.equal(useAppStore.getState().conflict, false);
+  assert.equal(tabNamed("main.py")!.fileContent, "external");
+  assert.equal(tabNamed("main.py")!.conflict, false);
 });
 
-test("save-and-continue writes before switching and the close guard supports all choices", async (t) => {
+test("save-and-continue writes before switching workspace and the unsaved guard supports all choices", async (t) => {
   const previous = useAppStore.getState();
   t.after(() => useAppStore.setState(previous, true));
-  useAppStore.setState({ ...editorState(), fileContent: "edits" });
+  useAppStore.setState({ ...editorState(), openTabs: [makeTab("main.py", "edits", "original")] });
   const order: string[] = [];
   t.mock.method(api, "writeWorkspaceFile", async () => { order.push("save"); return { revision: "v2" }; });
-  t.mock.method(api, "readWorkspaceFile", async () => { order.push("read"); return diskDocument("new"); });
-  const switching = useAppStore.getState().openWorkspaceFile("new.py");
+  t.mock.method(api, "listWorkspaceDir", async () => { order.push("list"); return []; });
+  const switching = useAppStore.getState().setWorkspaceDir("/new");
   useAppStore.getState().changePrompt!.resolve("save");
   await switching;
-  assert.deepEqual(order, ["save", "read"]);
+  assert.deepEqual(order, ["save", "list"]);
+  assert.deepEqual(useAppStore.getState().openTabs, []);
+  useAppStore.setState(editorState());
   for (const choice of ["cancel", "discard", "save"] as const) {
-    useAppStore.getState().editContent(`edit ${choice}`);
+    useAppStore.getState().editContent("main.py", `edit ${choice}`);
     const allowed = useAppStore.getState().confirmUnsaved();
     useAppStore.getState().changePrompt!.resolve(choice);
     assert.equal(await allowed, choice !== "cancel");
   }
+});
+
+test("closeFile refuses while busy, keeps buffer on cancel, and activates a neighbor tab", async (t) => {
+  const previous = useAppStore.getState();
+  t.after(() => useAppStore.setState(previous, true));
+  // 忙时拒绝关闭
+  useAppStore.setState({ ...editorState(), saving: true });
+  await useAppStore.getState().closeFile();
+  assert.equal(useAppStore.getState().activeFile, "main.py");
+  // 取消：保留标签与未保存内容
+  useAppStore.setState({ saving: false, openTabs: [makeTab("main.py", "unsaved edits", "original")] });
+  const canceled = useAppStore.getState().closeFile();
+  assert.ok(useAppStore.getState().changePrompt);
+  useAppStore.getState().changePrompt!.resolve("cancel");
+  await canceled;
+  assert.equal(useAppStore.getState().activeFile, "main.py");
+  assert.equal(tabNamed("main.py")!.fileContent, "unsaved edits");
+  // 保存：先写盘再关闭
+  t.mock.method(api, "writeWorkspaceFile", async () => ({ revision: "v2" }));
+  const saved = useAppStore.getState().closeFile();
+  useAppStore.getState().changePrompt!.resolve("save");
+  await saved;
+  assert.deepEqual(useAppStore.getState().openTabs, []);
+  assert.equal(useAppStore.getState().activeFile, null);
+  // 已全部关闭时再次调用为空操作
+  await useAppStore.getState().closeFile();
+  // 关闭活动标签后激活右侧邻居，并清掉残留错误
+  useAppStore.setState({ openTabs: [makeTab("a.py", "a"), makeTab("b.py", "b edits", "b"), makeTab("c.sh", "c")],
+    activeFile: "b.py", editorError: "stale error" });
+  const discarded = useAppStore.getState().closeFile();
+  useAppStore.getState().changePrompt!.resolve("discard");
+  await discarded;
+  assert.deepEqual(useAppStore.getState().openTabs.map((tab) => tab.name), ["a.py", "c.sh"]);
+  assert.equal(useAppStore.getState().activeFile, "c.sh");
+  assert.equal(useAppStore.getState().editorError, null);
+  // 关闭非活动标签不改变活动标签；关闭末尾标签回退到左侧邻居
+  await useAppStore.getState().closeFile("a.py");
+  assert.equal(useAppStore.getState().activeFile, "c.sh");
+  await useAppStore.getState().closeFile("c.sh");
+  assert.deepEqual(useAppStore.getState().openTabs, []);
+  assert.equal(useAppStore.getState().activeFile, null);
 });
 
 test("both run modes save non-entry edits first; failed saves never launch and startup locks editing", async (t) => {
@@ -210,23 +270,53 @@ test("both run modes save non-entry edits first; failed saves never launch and s
   t.mock.method(api, "runScript", async () => { order.push("run"); return "run-1"; });
   t.mock.method(api, "getRunStatus", async () => null);
   for (const kind of ["python", "command"] as const) {
-    useAppStore.setState({ ...editorState(), openFile: "helper.py", fileContent: "edited helper" });
+    useAppStore.setState({ ...editorState(), openTabs: [makeTab("helper.py", "edited helper", "original")], activeFile: "helper.py" });
     const request = { device_id: "device", workspace_dir: "/work", kind, entry: "main.py", command: "python3 main.py" };
     const starting = useAppStore.getState().startRun(request);
-    useAppStore.getState().editContent("ignored during launch");
-    assert.equal(useAppStore.getState().fileContent, "edited helper");
+    useAppStore.getState().editContent("helper.py", "ignored during launch");
+    assert.equal(tabNamed("helper.py")!.fileContent, "edited helper");
     await starting;
     assert.equal(useAppStore.getState().runs["run-1"].state, "preparing");
-    useAppStore.getState().editContent("next run");
+    useAppStore.getState().editContent("helper.py", "next run");
     assert.equal(await useAppStore.getState().saveFile(), false);
   }
   assert.deepEqual(order, ["save", "run", "save", "run"]);
-  useAppStore.setState({ ...editorState(), fileContent: "edits" });
+  useAppStore.setState({ ...editorState(), openTabs: [makeTab("main.py", "edits", "original")] });
   t.mock.method(api, "writeWorkspaceFile", async () => { throw new Error("disk full"); });
   await assert.rejects(useAppStore.getState().startRun({ device_id: "device", workspace_dir: "/work", kind: "python", entry: "main.py" }), /disk full/);
   assert.equal(order.length, 4);
   assert.equal(useAppStore.getState().starting, false);
-  assert.equal(useAppStore.getState().fileContent, "edits");
+  assert.equal(tabNamed("main.py")!.fileContent, "edits");
+});
+
+test("startRun saves every dirty tab and aborts on the first failure", async (t) => {
+  const previous = useAppStore.getState();
+  t.after(() => useAppStore.setState(previous, true));
+  const order: string[] = [];
+  t.mock.method(api, "writeWorkspaceFile", async (request) => { order.push(`save ${request.name}`); return { revision: "v2" }; });
+  t.mock.method(api, "runScript", async () => { order.push("run"); return "run-1"; });
+  t.mock.method(api, "getRunStatus", async () => null);
+  // 两个脏标签（其中一个是入口）都先保存再启动；干净标签不重复写盘
+  useAppStore.setState({ ...editorState(), openTabs: [
+    makeTab("helper.py", "helper edits", "original"),
+    makeTab("main.py", "main edits", "original"),
+    makeTab("notes.txt", "clean"),
+  ], activeFile: "main.py" });
+  await useAppStore.getState().startRun({ device_id: "device", workspace_dir: "/work", kind: "python", entry: "main.py" });
+  assert.deepEqual(order, ["save helper.py", "save main.py", "run"]);
+  assert.equal(anyDirty(useAppStore.getState()), false);
+  // 第一个保存失败即中止：不写第二个标签，也不启动
+  order.length = 0;
+  useAppStore.setState({ openTabs: [makeTab("a.py", "a edits", "a"), makeTab("b.py", "b edits", "b")], activeFile: "a.py", runs: {} });
+  t.mock.method(api, "writeWorkspaceFile", async (request) => {
+    order.push(`save ${request.name}`);
+    throw new Error("disk full");
+  });
+  await assert.rejects(
+    useAppStore.getState().startRun({ device_id: "device", workspace_dir: "/work", kind: "python", entry: "a.py" }),
+    /disk full/);
+  assert.deepEqual(order, ["save a.py"]);
+  assert.equal(dirtyTab(tabNamed("b.py")!), true);
 });
 
 test("editor language detection does not change execution inference", () => {

@@ -80,9 +80,9 @@ list_workspace_dir(dir, subdir)           // 树展开用
 - `workspaceFiles` 扁平数组改为树形状态：以相对路径为键的节点映射（`entries` / `expanded` / `loaded`），根节点在 `setWorkspaceDir` 时加载；
 - 新 action：`toggleDir`（懒加载子目录）、`createEntry` / `renameEntry` / `deleteEntry`，成功后局部刷新受影响节点而不是整树重载；
 - 沿用 `loadSequence` 竞态防护：切换工作区后作废进行中的展开 / 变更响应；
-- **打开文件联动**：
-  - 删除或重命名当前打开的文件：若有未保存修改先弹确认（复用现有 dirty 检查）；删除后关闭编辑器，重命名后更新 `openFile` 路径与文档身份；
-  - 删除或重命名包含打开文件的目录：同上处理；
+- **打开文件联动**（00017 起按多标签处理：受影响的所有标签）：
+  - 删除或重命名打开中的文件：若有未保存修改先弹确认（复用现有 dirty 检查）；删除后关闭对应标签，重命名后更新标签路径与文档身份；
+  - 删除或重命名包含打开文件的目录：对子树内所有打开的标签同上处理；
 - busy 错误（运行同步中）以可见提示呈现，不静默失败。
 
 ### 4.3 `src/components/WorkspacePanel.tsx`

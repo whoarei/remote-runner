@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { errorMessage } from "../api";
-import { dirtyDocument } from "../editorDocument";
+import { dirtyTab } from "../editorDocument";
 import { useAppStore } from "../store";
 import { emptyDevice, deviceLabel } from "./DeviceDialog";
 import { openWorkspace } from "../workspacePicker";
@@ -80,7 +80,12 @@ export function MenuBar({ onAbout, onCheckUpdate }: { onAbout: () => void; onChe
   const resetLayout = useAppStore((state) => state.resetLayout);
   const recentWorkspaces = useAppStore((state) => state.recentWorkspaces);
   const devices = useAppStore((state) => state.devices);
-  const dirty = useAppStore(dirtyDocument);
+  const dirty = useAppStore((state) => {
+    const tab = state.openTabs.find((t) => t.name === state.activeFile);
+    return tab ? dirtyTab(tab) : false;
+  });
+  const openFile = useAppStore((state) => state.activeFile);
+  const fileBusy = useAppStore((state) => state.loading || state.saving || state.starting || state.guarding);
 
   useEffect(() => {
     if (openMenu === null) return;
@@ -124,6 +129,7 @@ export function MenuBar({ onAbout, onCheckUpdate }: { onAbout: () => void; onChe
         },
         { type: "separator" },
         { label: "保存文件", disabled: !dirty, onSelect: () => void useAppStore.getState().saveFile() },
+        { label: "关闭文件", disabled: !openFile || fileBusy, onSelect: () => void useAppStore.getState().closeFile() },
         { type: "separator" },
         {
           label: "退出",
