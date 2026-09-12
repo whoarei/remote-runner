@@ -14,7 +14,8 @@ There is no hardware available in the development environment. Serial behavior i
 
 ## Repository map
 
-- `src/`: React UI, API bindings, Zustand state, xterm console, and frontend tests.
+- `src/`: React UI, API bindings, Zustand state, and xterm console.
+- `tests/`: frontend tests, bundled by esbuild and run via `node --test`.
 - `src-tauri/src/runner.rs`: request validation, run lifecycle, status/history, and transport dispatch.
 - `src-tauri/src/ssh/`: SSH client, SFTP synchronization, and SSH process sessions.
 - `src-tauri/src/serial/`: serial port leasing, shell framing, session control, and text workspace upload.
@@ -48,6 +49,13 @@ npm run tauri dev
 ```
 
 The `rr-cli` binary is an SSH-only smoke-test tool. It is useful only when an accessible SSH device is available; do not add a hardware dependency to the normal test suite.
+
+WSL integration tests are opt-in and skipped by default. From `src-tauri`:
+
+```powershell
+$env:REMOTE_RUNNER_TEST_WSL = 'Ubuntu-24.04' # actual installed distribution name
+cargo test --offline --lib wsl::tests -- --include-ignored
+```
 
 ## Implementation rules
 
