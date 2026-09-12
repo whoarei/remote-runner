@@ -7,6 +7,7 @@ pub mod runner;
 pub mod serial;
 pub mod ssh;
 pub mod terminal;
+pub mod tray;
 pub mod update;
 pub mod workspace;
 pub mod workspace_upload;
@@ -25,6 +26,11 @@ pub fn run() {
         .init();
 
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .args(["--minimized"])
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -47,6 +53,16 @@ pub fn run() {
                 event_rx: parking_lot::Mutex::new(event_rx),
             };
             app.manage(state);
+
+            tray::setup(app)?;
+
+            // Windows are created hidden; only a manual launch reveals the main
+            // window. Autostart launches carry `--minimized` and stay in the tray.
+            if let Some(window) = app.get_webview_window(tray::MAIN_WINDOW_LABEL) {
+                if !tray::start_minimized(&std::env::args().collect::<Vec<_>>()) {
+                    window.show()?;
+                }
+            }
 
             Ok(())
         })

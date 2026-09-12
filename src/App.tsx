@@ -4,7 +4,6 @@ import { useAppStore } from "./store";
 import { DeviceDialog } from "./components/DeviceDialog";
 import { WorkspacePanel } from "./components/WorkspacePanel";
 import { ConsolePanel } from "./components/ConsolePanel";
-import { useTerminalStore } from "./terminalStore";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { UnsavedDialog } from "./components/UnsavedDialog";
 import { TitleBar } from "./components/TitleBar";
@@ -12,8 +11,10 @@ import { AboutDialog } from "./components/AboutDialog";
 import { SplitHandle } from "./components/SplitHandle";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { anyDirty } from "./editorDocument";
 import { errorMessage } from "./api";
+import { requestQuit } from "./appLifecycle";
 import { clampSidebarWidth, clampConsoleHeight, clampSideSplit, DEFAULT_LAYOUT } from "./layoutState";
 import { checkForAvailableUpdate } from "./updateStatus";
 
@@ -45,25 +46,27 @@ export default function App() {
       if (anyDirty(useAppStore.getState())) { event.preventDefault(); event.returnValue = ""; }
     };
     window.addEventListener("beforeunload", beforeUnload);
-    let closing = false;
     let disposed = false;
-    const unlisten = isTauri() ? getCurrentWindow().onCloseRequested(async (event) => {
+    // 关闭窗口 = 最小化到托盘：隐藏不丢任何状态，无需未保存守卫。
+    // 真正的退出由托盘「退出」/ 菜单「文件 → 退出」经 requestQuit() 走守卫流程。
+    const unlisten = isTauri() ? getCurrentWindow().onCloseRequested((event) => {
       event.preventDefault();
-      if (closing) return;
-      const state = useAppStore.getState();
-      if (state.loading || state.saving || state.starting || state.guarding || state.updating) return;
-      closing = true;
-      try {
-        if (await state.confirmAllUnsaved()) {
-          await useTerminalStore.getState().closeAll();
-          await getCurrentWindow().destroy();
-        }
-      } catch (error) { useAppStore.setState({ editorError: errorMessage(error) }); }
-      finally { closing = false; }
+      void getCurrentWindow().hide().catch((error) => {
+        useAppStore.setState({ editorError: `窗口操作失败：${errorMessage(error)}` });
+      });
     }) : Promise.resolve(() => {});
-    void unlisten.then(() => { if (!disposed) setCloseReady(true); }).catch(() => {});
-    void unlisten.catch((error) => useAppStore.setState({ editorError: `关闭保护注册失败：${errorMessage(error)}` }));
-    return () => { disposed = true; window.removeEventListener("beforeunload", beforeUnload); void unlisten.then((fn) => fn()).catch(() => {}); };
+    const unlistenQuit = isTauri()
+      ? listen("tray://quit-requested", () => void requestQuit())
+      : Promise.resolve(() => {});
+    void Promise.all([unlisten, unlistenQuit])
+      .then(() => { if (!disposed) setCloseReady(true); })
+      .catch((error) => useAppStore.setState({ editorError: `关闭保护注册失败：${errorMessage(error)}` }));
+    return () => {
+      disposed = true;
+      window.removeEventListener("beforeunload", beforeUnload);
+      void unlisten.then((fn) => fn()).catch(() => {});
+      void unlistenQuit.then((fn) => fn()).catch(() => {});
+    };
   }, []);
 
   const layout = useAppStore((state) => state.layout);

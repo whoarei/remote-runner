@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { errorMessage } from "../api";
+import { isAutostartEnabled, setAutostartEnabled } from "../autostart";
+import { requestQuit } from "../appLifecycle";
 import { dirtyTab } from "../editorDocument";
 import { useAppStore } from "../store";
 import { emptyDevice, deviceLabel } from "./DeviceDialog";
@@ -86,6 +87,20 @@ export function MenuBar({ onAbout, onCheckUpdate }: { onAbout: () => void; onChe
   });
   const openFile = useAppStore((state) => state.activeFile);
   const fileBusy = useAppStore((state) => state.loading || state.saving || state.starting || state.guarding);
+  const [autostart, setAutostart] = useState(false);
+
+  useEffect(() => {
+    void isAutostartEnabled().then(setAutostart).catch(() => {});
+  }, []);
+
+  const toggleAutostart = () => {
+    const next = !autostart;
+    setAutostart(next);
+    setAutostartEnabled(next).catch((error) => {
+      setAutostart(!next);
+      useAppStore.setState({ editorError: `开机自启动设置失败：${errorMessage(error)}` });
+    });
+  };
 
   useEffect(() => {
     if (openMenu === null) return;
@@ -131,12 +146,12 @@ export function MenuBar({ onAbout, onCheckUpdate }: { onAbout: () => void; onChe
         { label: "保存文件", disabled: !dirty, onSelect: () => void useAppStore.getState().saveFile() },
         { label: "关闭文件", disabled: !openFile || fileBusy, onSelect: () => void useAppStore.getState().closeFile() },
         { type: "separator" },
+        { type: "checkbox", label: "开机自启动", disabled: !isTauri(), checked: autostart, onSelect: toggleAutostart },
+        { type: "separator" },
         {
           label: "退出",
           disabled: !isTauri(),
-          onSelect: () => void getCurrentWindow().close().catch((error) => {
-            useAppStore.setState({ editorError: `窗口操作失败：${errorMessage(error)}` });
-          }),
+          onSelect: () => void requestQuit(),
         },
       ],
     },

@@ -100,6 +100,10 @@ WebView 的 localStorage 中只有两个键，均为带版本后缀的 JSON：
 - 更新状态（`UpdateState`）：下载进度、更新互斥门（更新期间禁止启动运行），不落盘；
 - 运行中的 `RunHandle`：控制通道、停止信号、串口租约。
 
+## 系统启动项（不属于应用数据）
+
+「开机自启动」开关（托盘菜单 / 文件菜单）由 `tauri-plugin-autostart` 写入操作系统启动项：Windows 为 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下的 `Remote Runner` 值（带 `--minimized` 参数，自启动时静默驻留托盘）。该注册表项不属于应用配置目录，删除配置目录不会清除它；需在应用内取消勾选或在 Windows 启动项管理中移除（设计见 `docs/00018_20260912_tray-autostart.md`）。
+
 ## 数据清理方式
 
 当前没有应用内的数据清理入口。需要重置时：

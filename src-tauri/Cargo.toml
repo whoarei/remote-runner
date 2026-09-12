@@ -2,7 +2,8 @@
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
@@ -33,7 +34,7 @@ winreg = "0.55"
 
 [package]
 name = "remote-runner"
-version = "0.5.1"
+version = "0.5.2"
 description = "Embedded Linux Remote Script Runner"
 edition = "2021"
 build = "build.rs"
