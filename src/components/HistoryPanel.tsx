@@ -5,17 +5,15 @@ import { useAppStore } from "../store";
 import { PanelTitle } from "./PanelTitle";
 
 export function HistoryPanel({ collapsed, onToggleCollapse }: { collapsed: boolean; onToggleCollapse: () => void }) {
-  const { history, loadHistory, setActiveRun, runs, activeRunId } = useAppStore(useShallow((s) => ({
-    history: s.history, loadHistory: s.loadHistory, setActiveRun: s.setActiveRun, runs: s.runs, activeRunId: s.activeRunId,
+  const { history, setActiveRun, runs, activeRunId } = useAppStore(useShallow((s) => ({
+    history: s.history, setActiveRun: s.setActiveRun, runs: s.runs, activeRunId: s.activeRunId,
   })));
   const running = Object.values(runs).filter(isActiveRun);
   const report = (e: unknown) => useAppStore.setState({ editorError: errorMessage(e) });
 
   return (
     <div className="history-panel">
-      <PanelTitle title="Run History" collapsed={collapsed} onToggle={onToggleCollapse}>
-        <button onClick={() => void loadHistory().catch(report)}>刷新</button>
-      </PanelTitle>
+      <PanelTitle title="Run History" collapsed={collapsed} onToggle={onToggleCollapse} />
       {running.length > 0 && <ul className="history-list" aria-label="运行中的任务">
         {running.map((run) => <li key={run.run_id}>
           <button aria-pressed={activeRunId === run.run_id} onClick={() => setActiveRun(run.run_id)}>
