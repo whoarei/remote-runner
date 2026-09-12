@@ -74,6 +74,7 @@ interface AppState {
   setActiveRun: (id: string | null) => void;
   setConsoleSize: (cols: number, rows: number) => void;
   loadHistory: () => Promise<void>;
+  clearHistory: () => Promise<void>;
 }
 
 let loadSequence = 0;
@@ -463,6 +464,14 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   loadHistory: async () => {
     await get().loadRuns();
+  },
+  clearHistory: async () => {
+    await api.clearRunHistory();
+    set((s) => {
+      const history: RunStatus[] = [];
+      // 保留运行中的任务与当前选中回看的输出缓冲，其余随历史一起清理
+      return { ...pruneRuns({ ...s, history }), history, consoleSeq: s.consoleSeq + 1 };
+    });
   },
   loadRuns: async () => {
     const before = get().runs;

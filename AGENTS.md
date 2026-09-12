@@ -16,7 +16,7 @@ There is no hardware available in the development environment. Serial behavior i
 
 - `src/`: React UI, API bindings, Zustand state, and xterm console.
 - `tests/`: frontend tests, bundled by esbuild and run via `node --test`.
-- `src-tauri/src/runner.rs`: request validation, run lifecycle, status/history, and transport dispatch.
+- `src-tauri/src/runner.rs`: request validation, run lifecycle, status/history, per-run output log persistence (`run_logs/`, 2 MiB cap, pruned with history), and transport dispatch.
 - `src-tauri/src/ssh/`: SSH client, SFTP synchronization, and SSH process sessions.
 - `src-tauri/src/serial/`: serial port leasing, shell framing, session control, and text workspace upload.
 - `src-tauri/src/wsl/`: direct WSL process bridge, bounded workspace snapshots, Python helper, and opt-in WSL integration tests.

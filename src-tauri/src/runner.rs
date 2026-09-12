@@ -68,6 +68,12 @@ pub struct RunStatus {
     pub error: Option<String>,
     pub started_at: String,
     pub ended_at: Option<String>,
+    /// 已持久化的输出字节数（run_logs/<run_id>.log），0 表示没有可导出的输出
+    #[serde(default)]
+    pub output_bytes: u64,
+    /// 输出超过 RUN_LOG_LIMIT 被截断时为 true
+    #[serde(default)]
+    pub output_truncated: bool,
 }
 
 impl RunStatus {
@@ -81,6 +87,8 @@ impl RunStatus {
             error: None,
             started_at: Local::now().to_rfc3339(),
             ended_at: None,
+            output_bytes: 0,
+            output_truncated: false,
         }
     }
 }
@@ -115,6 +123,12 @@ struct RunHandle {
     control: mpsc::UnboundedSender<SessionControl>,
     stop_tx: mpsc::UnboundedSender<StopKind>,
     status: RunStatus,
+    /// 已写入 run_logs/<run_id>.log 的字节数
+    log_bytes: u64,
+    /// 输出超过 RUN_LOG_LIMIT，日志只保留开头部分
+    log_truncated: bool,
+    /// 日志写入失败，放弃该 run 的后续落盘
+    log_failed: bool,
 }
 
 #[derive(Clone)]
@@ -122,10 +136,52 @@ pub struct RunManager {
     handles: Arc<Mutex<HashMap<String, RunHandle>>>,
     history: Arc<Mutex<VecDeque<RunStatus>>>,
     history_path: PathBuf,
+    logs_dir: PathBuf,
     event_tx: broadcast::Sender<RunEvent>,
 }
 
 const HISTORY_LIMIT: usize = 200;
+/// 单个 run 持久化输出日志的大小上限
+const RUN_LOG_LIMIT: u64 = 2 * 1024 * 1024;
+
+/// run_id 用于拼日志文件名，只允许安全字符，防止路径穿越
+fn valid_run_id(run_id: &str) -> bool {
+    !run_id.is_empty()
+        && run_id.len() <= 64
+        && run_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+fn log_path(logs_dir: &std::path::Path, run_id: &str) -> Option<PathBuf> {
+    valid_run_id(run_id).then(|| logs_dir.join(format!("{run_id}.log")))
+}
+
+fn remove_log(logs_dir: &std::path::Path, run_id: &str) {
+    if let Some(path) = log_path(logs_dir, run_id) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// 删除不在历史中的孤儿日志文件（如崩溃残留）；只认 `<run_id>.log`，不递归
+fn prune_orphan_logs(logs_dir: &std::path::Path, history: &VecDeque<RunStatus>) {
+    let Ok(entries) = std::fs::read_dir(logs_dir) else {
+        return;
+    };
+    let keep: std::collections::HashSet<&str> = history.iter().map(|h| h.run_id.as_str()).collect();
+    for entry in entries.flatten() {
+        if !entry.file_type().is_ok_and(|t| t.is_file()) {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(id) = name.to_str().and_then(|n| n.strip_suffix(".log")) else {
+            continue;
+        };
+        if !valid_run_id(id) || !keep.contains(id) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
 /// 输出流中携带远程 PID 的标记
 const PID_MARKER_PREFIX: &str = "__DEVRUNNER_PID_";
 const PID_MARKER_SUFFIX: &str = "__";
@@ -133,15 +189,24 @@ const PID_MARKER_SUFFIX: &str = "__";
 impl RunManager {
     pub fn new(config_dir: &std::path::Path, event_tx: broadcast::Sender<RunEvent>) -> Self {
         let history_path = config_dir.join("history.json");
+        let logs_dir = config_dir.join("run_logs");
+        std::fs::create_dir_all(&logs_dir).ok();
         let mut history = std::fs::read_to_string(&history_path)
             .ok()
             .and_then(|s| serde_json::from_str::<VecDeque<RunStatus>>(&s).ok())
             .unwrap_or_default();
-        history.truncate(HISTORY_LIMIT);
+        // 超出上限的条目连同输出日志一起淘汰
+        if history.len() > HISTORY_LIMIT {
+            for old in history.drain(HISTORY_LIMIT..) {
+                remove_log(&logs_dir, &old.run_id);
+            }
+        }
+        prune_orphan_logs(&logs_dir, &history);
         Self {
             handles: Arc::new(Mutex::new(HashMap::new())),
             history: Arc::new(Mutex::new(history)),
             history_path,
+            logs_dir,
             event_tx,
         }
     }
@@ -162,6 +227,7 @@ impl RunManager {
     }
 
     fn emit_output(&self, run_id: &str, stream: OutputStream, data: &[u8]) {
+        self.append_log(run_id, data);
         use base64::Engine;
         for chunk in data.chunks(crate::events::OUTPUT_CHUNK) {
             let _ = self.event_tx.send(RunEvent::Output {
@@ -173,6 +239,34 @@ impl RunManager {
                 .into(),
                 data: base64::engine::general_purpose::STANDARD.encode(chunk),
             });
+        }
+    }
+
+    /// 把原始输出追加到 run_logs/<run_id>.log；超限截断、写失败放弃，均不影响运行
+    fn append_log(&self, run_id: &str, data: &[u8]) {
+        let mut handles = self.handles.lock();
+        let Some(h) = handles.get_mut(run_id) else {
+            return;
+        };
+        if h.log_failed || h.log_truncated {
+            return;
+        }
+        let Some(path) = log_path(&self.logs_dir, run_id) else {
+            return;
+        };
+        let remaining = (RUN_LOG_LIMIT - h.log_bytes) as usize;
+        let slice = &data[..data.len().min(remaining)];
+        let result = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, slice));
+        match result {
+            Ok(()) => {
+                h.log_bytes += slice.len() as u64;
+                h.log_truncated = slice.len() < data.len();
+            }
+            Err(_) => h.log_failed = true,
         }
     }
 
@@ -201,6 +295,40 @@ impl RunManager {
 
     pub fn history(&self) -> Vec<RunStatus> {
         self.history.lock().iter().cloned().collect()
+    }
+
+    /// 清空历史：删除全部历史条目的输出日志并持久化空历史；运行中的任务不受影响
+    pub fn clear_history(&self) -> Result<()> {
+        {
+            let mut hist = self.history.lock();
+            for old in hist.iter() {
+                remove_log(&self.logs_dir, &old.run_id);
+            }
+            hist.clear();
+        }
+        if let Some(parent) = self.history_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&self.history_path, "[]")?;
+        Ok(())
+    }
+
+    /// 把某次运行持久化的输出日志原样复制到用户选择的路径
+    pub fn export_output(&self, run_id: &str, path: &str) -> Result<()> {
+        if path.trim().is_empty() {
+            return Err(RunnerError::InvalidInput(
+                "export path must not be empty".into(),
+            ));
+        }
+        let src = log_path(&self.logs_dir, run_id)
+            .ok_or_else(|| RunnerError::InvalidInput(format!("invalid run id: {run_id}")))?;
+        if !src.is_file() {
+            return Err(RunnerError::RunNotFound(format!(
+                "no saved output for run {run_id}"
+            )));
+        }
+        std::fs::copy(&src, path)?;
+        Ok(())
     }
 
     pub fn send_input(&self, run_id: &str, data: Vec<u8>) -> Result<()> {
@@ -287,6 +415,8 @@ impl RunManager {
                     h.status.exit_code = exit_code;
                     h.status.error = error;
                     h.status.ended_at = Some(Local::now().to_rfc3339());
+                    h.status.output_bytes = h.log_bytes;
+                    h.status.output_truncated = h.log_truncated;
                     h.status.clone()
                 }
                 None => return,
@@ -295,8 +425,11 @@ impl RunManager {
         {
             let mut hist = self.history.lock();
             hist.push_front(status.clone());
+            // 淘汰最旧的条目，连同其输出日志一起删除
             while hist.len() > HISTORY_LIMIT {
-                hist.pop_back();
+                if let Some(old) = hist.pop_back() {
+                    remove_log(&self.logs_dir, &old.run_id);
+                }
             }
             if let Ok(data) = serde_json::to_string_pretty(&*hist) {
                 if let Some(parent) = self.history_path.parent() {
@@ -353,6 +486,9 @@ impl RunManager {
                 control: placeholder,
                 stop_tx,
                 status: status.clone(),
+                log_bytes: 0,
+                log_truncated: false,
+                log_failed: false,
             },
         );
         drop(handles);
@@ -1087,6 +1223,9 @@ mod tests {
                 control,
                 stop_tx,
                 status: RunStatus::new("run".into(), "test".into(), "bounded".into()),
+                log_bytes: 0,
+                log_truncated: false,
+                log_failed: false,
             },
         );
         manager.finish("run", RunState::Exited, Some(7), None);
@@ -1240,6 +1379,9 @@ mod tests {
                 control,
                 stop_tx,
                 status: RunStatus::new("run".into(), "device".into(), "test".into()),
+                log_bytes: 0,
+                log_truncated: false,
+                log_failed: false,
             },
         );
         manager.stop("run").unwrap();
@@ -1255,6 +1397,202 @@ mod tests {
                 }
             }
         }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn test_handle(run_id: &str) -> RunHandle {
+        let (control, _) = mpsc::unbounded_channel();
+        let (stop_tx, _) = mpsc::unbounded_channel();
+        RunHandle {
+            _serial_lease: None,
+            capabilities: TransportKind::Ssh.capabilities(),
+            control,
+            stop_tx,
+            status: RunStatus::new(run_id.into(), "device".into(), "test".into()),
+            log_bytes: 0,
+            log_truncated: false,
+            log_failed: false,
+        }
+    }
+
+    #[test]
+    fn output_is_persisted_to_log_and_capped_at_run_log_limit() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let (tx, _rx) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        manager
+            .handles
+            .lock()
+            .insert("run".into(), test_handle("run"));
+        manager.emit_output("run", OutputStream::Stdout, b"hello ");
+        manager.emit_output("run", OutputStream::Stderr, b"world");
+        // 超过上限的部分被截断，只保留开头 RUN_LOG_LIMIT 字节
+        manager.emit_output("run", OutputStream::Stdout, &vec![b'x'; 3 * 1024 * 1024]);
+        manager.emit_output("run", OutputStream::Stdout, b"dropped");
+        manager.finish("run", RunState::Exited, Some(0), None);
+
+        let log = std::fs::read(root.join("run_logs/run.log")).unwrap();
+        assert_eq!(log.len() as u64, RUN_LOG_LIMIT);
+        assert!(log.starts_with(b"hello world"));
+        let status = &manager.history()[0];
+        assert_eq!(status.output_bytes, RUN_LOG_LIMIT);
+        assert!(status.output_truncated);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn log_write_failure_does_not_affect_the_run() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let (tx, mut rx) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        // 在日志路径上放一个同名目录，使文件创建必然失败
+        std::fs::create_dir_all(root.join("run_logs/run.log")).unwrap();
+        manager
+            .handles
+            .lock()
+            .insert("run".into(), test_handle("run"));
+        manager.emit_output("run", OutputStream::Stdout, b"data");
+        manager.finish("run", RunState::Exited, Some(0), None);
+        // 事件仍推送，历史仍记录，只是没有输出字节
+        assert!(matches!(rx.try_recv(), Ok(RunEvent::Output { .. })));
+        assert_eq!(manager.history()[0].output_bytes, 0);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn evicted_history_entries_lose_their_logs() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let (tx, _rx) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        // 先填满 HISTORY_LIMIT 条带日志的历史
+        for i in 0..HISTORY_LIMIT {
+            let id = format!("run{i}");
+            manager.handles.lock().insert(id.clone(), test_handle(&id));
+            manager.emit_output(&id, OutputStream::Stdout, b"x");
+            manager.finish(&id, RunState::Exited, Some(0), None);
+        }
+        assert!(root.join("run_logs/run0.log").is_file());
+        // 第 201 条淘汰最旧的 run0，其日志一并删除
+        manager
+            .handles
+            .lock()
+            .insert("new".into(), test_handle("new"));
+        manager.emit_output("new", OutputStream::Stdout, b"x");
+        manager.finish("new", RunState::Exited, Some(0), None);
+        assert_eq!(manager.history().len(), HISTORY_LIMIT);
+        assert!(!root.join("run_logs/run0.log").exists());
+        assert!(root.join("run_logs/new.log").is_file());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn startup_truncates_history_and_prunes_orphan_logs() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let logs = root.join("run_logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        // 超出上限的历史：run0 应被截掉并删除日志
+        let history: VecDeque<RunStatus> = (0..HISTORY_LIMIT + 1)
+            .map(|i| RunStatus::new(format!("run{i}"), "d".into(), "l".into()))
+            .collect();
+        std::fs::write(
+            root.join("history.json"),
+            serde_json::to_string(&history).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(logs.join("run200.log"), b"evicted").unwrap();
+        std::fs::write(logs.join("run1.log"), b"kept").unwrap();
+        std::fs::write(logs.join("orphan.log"), b"stale").unwrap();
+        std::fs::write(logs.join("not-a-log.txt"), b"untouched").unwrap();
+
+        let (tx, _rx) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        assert_eq!(manager.history().len(), HISTORY_LIMIT);
+        // 队尾超出上限的 run200 被截掉，日志一并删除
+        assert!(!logs.join("run200.log").exists());
+        assert!(logs.join("run1.log").is_file());
+        assert!(!logs.join("orphan.log").exists());
+        // 不符合命名约定的文件不受影响
+        assert!(logs.join("not-a-log.txt").is_file());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn old_history_without_output_fields_still_loads() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("history.json"),
+            r#"[{"run_id":"r1","device_name":"d","label":"l","state":"exited",
+                "exit_code":0,"error":null,"started_at":"2026-09-12T00:00:00+08:00",
+                "ended_at":null}]"#,
+        )
+        .unwrap();
+        let (tx, _rx) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        let status = &manager.history()[0];
+        assert_eq!(status.run_id, "r1");
+        assert_eq!(status.output_bytes, 0);
+        assert!(!status.output_truncated);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn export_output_validates_input_and_copies_raw_bytes() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let (tx, _rx) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        manager
+            .handles
+            .lock()
+            .insert("run".into(), test_handle("run"));
+        manager.emit_output("run", OutputStream::Stdout, b"\xffraw\nbytes");
+        let target = root.join("export.log");
+
+        assert!(manager
+            .export_output("../escape", target.to_str().unwrap())
+            .is_err());
+        assert!(manager
+            .export_output("missing", target.to_str().unwrap())
+            .is_err());
+        assert!(manager.export_output("run", "").is_err());
+        manager
+            .export_output("run", target.to_str().unwrap())
+            .unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"\xffraw\nbytes");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn clear_history_removes_logs_and_keeps_active_runs() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let (tx, _rx) = crate::events::channel();
+        let manager = RunManager::new(&root, tx);
+        for id in ["done1", "done2"] {
+            manager.handles.lock().insert(id.into(), test_handle(id));
+            manager.emit_output(id, OutputStream::Stdout, b"x");
+            manager.finish(id, RunState::Exited, Some(0), None);
+        }
+        // 运行中的任务带日志，清空历史不应触碰
+        manager
+            .handles
+            .lock()
+            .insert("live".into(), test_handle("live"));
+        manager.emit_output("live", OutputStream::Stdout, b"x");
+
+        manager.clear_history().unwrap();
+        assert!(manager.history().is_empty());
+        assert_eq!(
+            std::fs::read_to_string(root.join("history.json")).unwrap(),
+            "[]"
+        );
+        assert!(!root.join("run_logs/done1.log").exists());
+        assert!(!root.join("run_logs/done2.log").exists());
+        assert!(root.join("run_logs/live.log").is_file());
+
+        // 重启后历史仍为空（清空结果已持久化）
+        let (tx2, _rx2) = crate::events::channel();
+        let manager2 = RunManager::new(&root, tx2);
+        assert!(manager2.history().is_empty());
         std::fs::remove_dir_all(root).unwrap();
     }
 }

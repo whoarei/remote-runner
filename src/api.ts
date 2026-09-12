@@ -43,6 +43,10 @@ export interface RunStatus {
   error: string | null;
   started_at: string;
   ended_at: string | null;
+  /** 已持久化的输出字节数；0 表示没有可导出的输出（旧历史条目缺省 0） */
+  output_bytes?: number;
+  /** 输出超过单 run 日志上限被截断 */
+  output_truncated?: boolean;
 }
 
 export interface TerminalStatus {
@@ -137,6 +141,11 @@ export const api = {
     invoke<RunStatus | null>("get_run_status", { runId }),
   listRunningRuns: () => invoke<RunStatus[]>("list_running_runs"),
   getRunHistory: () => invoke<RunStatus[]>("get_run_history"),
+  exportRunRecord: (path: string, contents: string) =>
+    invoke<void>("export_run_record", { path, contents }),
+  exportRunOutput: (runId: string, path: string) =>
+    invoke<void>("export_run_output", { runId, path }),
+  clearRunHistory: () => invoke<void>("clear_run_history"),
   drainRunEvents: () => invoke<RunEvent[]>("drain_run_events"),
 
   checkAppUpdate: () => invoke<AppUpdateInfo | null>("check_app_update"),

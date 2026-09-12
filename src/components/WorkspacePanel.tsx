@@ -5,15 +5,8 @@ import type { WorkspaceEntry } from "../api";
 import { useAppStore } from "../store";
 import { joinPath, WORKSPACE_ROOT, WorkspacePath, WorkspaceTree } from "../workspaceTree";
 import { ConfirmDialog, ConfirmRequest } from "./ConfirmDialog";
+import { ContextMenu, contextMenuPosition, MenuEntry, MenuState } from "./ContextMenu";
 import { PanelTitle } from "./PanelTitle";
-
-type MenuEntry = { label: string; danger?: boolean; onSelect: () => void } | "separator";
-
-interface MenuState {
-  x: number;
-  y: number;
-  entries: MenuEntry[];
-}
 
 type Editing =
   | { mode: "create-file"; dir: WorkspacePath }
@@ -134,41 +127,6 @@ function TreeLevel(props: TreeProps) {
   );
 }
 
-function ContextMenu({ menu, disabled, onClose }: { menu: MenuState | null; disabled: boolean; onClose: () => void }) {
-  const container = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!menu) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if (container.current && !container.current.contains(event.target as Node)) onClose();
-    };
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
-    document.addEventListener("pointerdown", onPointerDown, true);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown, true);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [menu, onClose]);
-  if (!menu) return null;
-  return (
-    <div className="menu-dropdown context-menu" role="menu" ref={container} style={{ left: menu.x, top: menu.y }}>
-      {menu.entries.map((entry, index) => entry === "separator"
-        ? <div key={index} className="menu-separator" role="separator" />
-        : <button
-          key={index}
-          type="button"
-          role="menuitem"
-          className={`menu-item${entry.danger ? " menu-item-danger" : ""}`}
-          disabled={disabled}
-          onClick={() => { onClose(); entry.onSelect(); }}
-        >
-          <span className="menu-check" aria-hidden="true" />
-          <span className="menu-label">{entry.label}</span>
-        </button>)}
-    </div>
-  );
-}
-
 export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boolean; onToggleCollapse: () => void }) {
   const {
     workspaceDir,
@@ -215,8 +173,7 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
       entries.push({ label: "删除", danger: true, onSelect: () => setPendingDelete({ path, isDir: entry.is_dir }) });
     }
     setMenu({
-      x: Math.max(0, Math.min(event.clientX, window.innerWidth - 200)),
-      y: Math.max(0, Math.min(event.clientY, window.innerHeight - entries.length * 30 - 16)),
+      ...contextMenuPosition(event.clientX, event.clientY, entries.length),
       entries,
     });
   };
