@@ -21,7 +21,8 @@
 
 - 不做 VSCode 式的任意面板拖拽停靠（拖动面板标题到任意区域）。该能力需要自研
   docking 系统，投入产出比低。
-- DeviceBar（设备选择栏）保持原位，不迁入菜单。
+- ~~DeviceBar（设备选择栏）保持原位，不迁入菜单。~~（后续调整：设备栏已移除，
+  设备选择并入运行工具栏，添加 / 编辑设备移入「文件」菜单，对话框为 DeviceDialog.tsx。）
 - Rust 后端无改动。
 
 ## 设计
@@ -75,8 +76,9 @@ interface LayoutState {
 窗口控制按钮保留在右侧。
 
 - **文件**：打开工作区… / 最近的工作区（子菜单，来自 `recentWorkspaces`，选中即打开）/
-  保存文件（有未保存更改时可用）/ 退出（仅 Tauri 桌面环境可用，走 `close()` 以触发
-  未保存确认）。
+  添加设备… / 编辑设备（子菜单列出现有设备，选中即打开 DeviceDialog 编辑该设备，
+  无设备时禁用）/ 保存文件（有未保存更改时可用）/ 退出（仅 Tauri 桌面环境可用，
+  走 `close()` 以触发未保存确认）。
 - **视图**：工作区面板 ✓ / 历史面板 ✓ / 控制台面板 ✓ / 侧栏位置（左侧 · 右侧）/
   重置布局。
 - **帮助**：关于 Remote Runner…（打开现有 AboutDialog）。
@@ -96,7 +98,6 @@ WorkspacePanel 只保留当前目录展示与文件列表。
 
 ```
 TitleBar(MenuBar | 工作区名+脏标记 | 窗口控制)
-header: DeviceBar
 main (flex row):
   [侧栏 left]  →  aside(Workspace / SplitHandle / History, 宽度=sidebarWidth)
                   + SplitHandle(vertical)

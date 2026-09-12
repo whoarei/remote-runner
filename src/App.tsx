@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { onRunEvents, api } from "./api";
 import { useAppStore } from "./store";
-import { DeviceBar } from "./components/DeviceBar";
+import { DeviceDialog } from "./components/DeviceDialog";
 import { WorkspacePanel } from "./components/WorkspacePanel";
 import { ConsolePanel } from "./components/ConsolePanel";
 import { useTerminalStore } from "./terminalStore";
@@ -135,6 +135,7 @@ export default function App() {
     <div className="app">
       <UnsavedDialog />
       <AboutDialog dialogRef={aboutDialog} autoCheckNonce={aboutAutoCheck} />
+      <DeviceDialog />
       <TitleBar
         closeReady={closeReady}
         onAbout={() => aboutDialog.current?.showModal()}
@@ -143,9 +144,6 @@ export default function App() {
           aboutDialog.current?.showModal();
         }}
       />
-      <header className="app-header">
-        <DeviceBar />
-      </header>
       <main className="app-main">
         {layout.sidebarPosition === "left" && sidebar}
         <div className="workbench">

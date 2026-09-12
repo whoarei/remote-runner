@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { errorMessage } from "../api";
 import { dirtyDocument } from "../editorDocument";
 import { useAppStore } from "../store";
+import { emptyDevice, deviceLabel } from "./DeviceDialog";
 import { openWorkspace } from "../workspacePicker";
 
 interface MenuEntry {
@@ -78,6 +79,7 @@ export function MenuBar({ onAbout, onCheckUpdate }: { onAbout: () => void; onChe
   const setLayout = useAppStore((state) => state.setLayout);
   const resetLayout = useAppStore((state) => state.resetLayout);
   const recentWorkspaces = useAppStore((state) => state.recentWorkspaces);
+  const devices = useAppStore((state) => state.devices);
   const dirty = useAppStore(dirtyDocument);
 
   useEffect(() => {
@@ -107,6 +109,18 @@ export function MenuBar({ onAbout, onCheckUpdate }: { onAbout: () => void; onChe
           children: recentWorkspaces.length > 0
             ? recentWorkspaces.map((dir) => ({ label: dir, onSelect: () => void openWorkspace(dir) }))
             : [{ label: "（无最近记录）", disabled: true }],
+        },
+        { type: "separator" },
+        { label: "添加设备…", onSelect: () => useAppStore.getState().openDeviceDialog(emptyDevice()) },
+        {
+          label: "编辑设备",
+          disabled: devices.length === 0,
+          children: devices.length > 0
+            ? devices.map((device) => ({
+                label: deviceLabel(device),
+                onSelect: () => useAppStore.getState().openDeviceDialog({ ...device }),
+              }))
+            : [{ label: "（无设备）", disabled: true }],
         },
         { type: "separator" },
         { label: "保存文件", disabled: !dirty, onSelect: () => void useAppStore.getState().saveFile() },

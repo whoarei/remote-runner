@@ -13,6 +13,8 @@ interface AppState {
   availableUpdate: AppUpdateInfo | null;
   devices: DeviceProfile[];
   selectedDeviceId: string | null;
+  /** 正在添加 / 编辑的设备（驱动设备对话框）；null 表示对话框关闭 */
+  editingDevice: DeviceProfile | null;
 
   workspaceDir: string | null;
   recentWorkspaces: string[];
@@ -54,6 +56,9 @@ interface AppState {
 
   loadDevices: () => Promise<void>;
   selectDevice: (id: string | null) => void;
+  /** 打开设备对话框：传入空模板表示添加新设备，传入已有设备表示编辑 */
+  openDeviceDialog: (device: DeviceProfile) => void;
+  closeDeviceDialog: () => void;
   setWorkspaceDir: (dir: string | null) => Promise<void>;
   loadWorkspaceDir: (dir: WorkspacePath) => Promise<void>;
   toggleWorkspaceDir: (dir: WorkspacePath) => Promise<void>;
@@ -119,6 +124,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   availableUpdate: null,
   devices: [],
   selectedDeviceId: null,
+  editingDevice: null,
 
   workspaceDir: null,
   recentWorkspaces: loadWorkspaceHistory(),
@@ -177,6 +183,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   selectDevice: (id) => set({ selectedDeviceId: id }),
+
+  openDeviceDialog: (device) => set({ editingDevice: device }),
+  closeDeviceDialog: () => set({ editingDevice: null }),
 
   setWorkspaceDir: async (dir) => {
     if (get().saving || get().starting || get().guarding) return;

@@ -31,10 +31,10 @@ remote_runner/
 │   ├── store.ts                # zustand 全局状态（设备/工作区/run/输出缓冲）
 │   ├── App.tsx
 │   └── components/
-│       ├── DeviceBar.tsx       # 设备选择 + 添加/编辑/测试连接（模态框）
+│       ├── DeviceDialog.tsx    # 添加/编辑/测试连接（模态框，经「文件」菜单打开）
 │       ├── WorkspacePanel.tsx  # 本地工作区目录选择与文件列表
 │       ├── Editor.tsx          # 脚本预览（只读 textarea）
-│       ├── RunToolbar.tsx      # 脚本/命令模式、参数、pty/pipe、超时、Run/Stop
+│       ├── RunToolbar.tsx      # 设备选择、脚本/命令模式、参数、pty/pipe、超时、Run/Stop
 │       ├── RunConsole.tsx      # xterm.js 控制台（输入回传、Ctrl+C、resize）
 │       └── HistoryPanel.tsx    # 运行历史
 └── src-tauri/src/              # Rust 后端

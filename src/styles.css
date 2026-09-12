@@ -241,23 +241,6 @@ body,
 body.split-dragging-vertical { cursor: col-resize; user-select: none; }
 body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 
-/* ---------- header / device bar ---------- */
-.app-header {
-  padding: 8px 12px;
-  border-bottom: 1px solid #333;
-  background: #1e1f24;
-}
-
-.device-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.device-bar .label {
-  color: #999;
-}
-
 /* ---------- main ---------- */
 .app-main {
   display: flex;

@@ -5,17 +5,20 @@ import { useAppStore } from "../store";
 import { dirtyDocument } from "../editorDocument";
 import { isActiveRun } from "../runState";
 import { collectScripts } from "../workspaceTree";
+import { deviceLabel } from "./DeviceDialog";
 
 export function RunToolbar() {
   const {
     selectedDeviceId,
     devices,
+    selectDevice,
     workspaceDir,
     workspaceTree,
     openFile,
     activeRunId,
     runs,
   } = useAppStore(useShallow((s) => ({ selectedDeviceId: s.selectedDeviceId, devices: s.devices,
+    selectDevice: s.selectDevice,
     workspaceDir: s.workspaceDir, workspaceTree: s.workspaceTree, openFile: s.openFile,
     activeRunId: s.activeRunId, runs: s.runs })));
 
@@ -97,6 +100,12 @@ export function RunToolbar() {
         <option value="">运行中的任务…</option>
         {Object.values(runs).filter(isActiveRun).map((r) => <option key={r.run_id} value={r.run_id}>{r.label} @ {r.device_name}</option>)}
       </select>}
+      <select aria-label="选择设备" value={selectedDeviceId ?? ""} onChange={(e) => selectDevice(e.target.value || null)}>
+        {devices.length === 0 && <option value="">（无设备，请先在“文件”菜单添加）</option>}
+        {devices.map((d) => (
+          <option key={d.id} value={d.id}>{deviceLabel(d)}</option>
+        ))}
+      </select>
       <select value={mode} onChange={(e) => setDraft({ mode: e.target.value as "script" | "command" })}>
         <option value="script">脚本</option>
         <option value="command">命令</option>
