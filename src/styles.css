@@ -213,6 +213,15 @@ body,
 .titlebar .titlebar-close:hover:not(:disabled) { background: #c42b1c; color: #fff; }
 .titlebar .titlebar-close:active:not(:disabled) { background: #a92316; }
 .titlebar-button:focus-visible { outline: 2px solid #8fa9e8; outline-offset: -3px; }
+
+.titlebar .titlebar-update {
+  width: auto;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #7aa5f8;
+}
+.titlebar .titlebar-update:hover:not(:disabled) { color: #a8c3fb; }
 .titlebar-inactive { color: #777b89; }
 .titlebar-inactive .titlebar-logo,
 .titlebar-inactive .titlebar-workspace { opacity: 0.65; }

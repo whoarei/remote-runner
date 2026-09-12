@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api, DeviceProfile, RunEvent, RunStatus, RunRequest, WorkspaceEntryKind, errorMessage } from "./api";
+import { api, DeviceProfile, RunEvent, RunStatus, RunRequest, WorkspaceEntryKind, errorMessage, AppUpdateInfo } from "./api";
 import { ChangeChoice, dirtyDocument, EditorLanguage, inferLanguage, uploadBusy } from "./editorDocument";
 import { appendOutput, MAX_TOTAL_OUTPUT_BYTES, OutputBuffer, trimOutput } from "./outputBuffer";
 import { DEFAULT_RUN_DRAFT, isActiveRun, newestStatus, RunDraft } from "./runState";
@@ -9,6 +9,8 @@ import { collectScripts, dropSubtree, isWithin, joinPath, nameOf, parentOf, reke
 
 interface AppState {
   updating: boolean;
+  /** 启动时静默检查发现的可用更新（驱动标题栏「更新」按钮） */
+  availableUpdate: AppUpdateInfo | null;
   devices: DeviceProfile[];
   selectedDeviceId: string | null;
 
@@ -113,6 +115,7 @@ function pruneRuns(state: Pick<AppState, "runs" | "history" | "outputBuffers" | 
 
 export const useAppStore = create<AppState>((set, get) => ({
   updating: false,
+  availableUpdate: null,
   devices: [],
   selectedDeviceId: null,
 

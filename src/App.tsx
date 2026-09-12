@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { onRunEvents } from "./api";
+import { onRunEvents, api } from "./api";
 import { useAppStore } from "./store";
 import { DeviceBar } from "./components/DeviceBar";
 import { WorkspacePanel } from "./components/WorkspacePanel";
@@ -15,6 +15,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { dirtyDocument } from "./editorDocument";
 import { errorMessage } from "./api";
 import { clampSidebarWidth, clampConsoleHeight, clampSideSplit, DEFAULT_LAYOUT } from "./layoutState";
+import { checkForAvailableUpdate } from "./updateStatus";
 
 const Editor = lazy(() => import("./components/Editor").then((module) => ({ default: module.Editor })));
 
@@ -32,6 +33,12 @@ export default function App() {
     void loadRuns().catch(report);
     return onRunEvents(handleRunEvents, report);
   }, [loadDevices, loadRuns, handleRunEvents]);
+
+  // 启动后静默检查一次更新；发现新版本时点亮标题栏「更新」按钮，失败不打扰用户。
+  useEffect(() => {
+    if (!isTauri()) return;
+    void checkForAvailableUpdate(api.checkAppUpdate, (info) => useAppStore.setState({ availableUpdate: info }));
+  }, []);
 
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {

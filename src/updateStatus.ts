@@ -1,5 +1,6 @@
 /** 升级流程的纯展示辅助（无 Tauri 依赖，便于单元测试）。 */
 import { dirtyDocument } from "./editorDocument";
+import type { AppUpdateInfo } from "./api";
 
 export interface UpdateProgress {
   phase: "downloading" | "verifying" | "installing";
@@ -47,4 +48,17 @@ export function formatDownloadProgress(downloaded: number, total: number | null)
   if (total === null || total <= 0) return `已下载 ${formatBytes(downloaded)}`;
   const percent = Math.min(100, Math.floor((downloaded / total) * 100));
   return `已下载 ${formatBytes(downloaded)} / ${formatBytes(total)}（${percent}%）`;
+}
+
+/** 启动时静默检查：仅在有更新时回调；离线或检查失败不打扰用户。 */
+export async function checkForAvailableUpdate(
+  check: () => Promise<AppUpdateInfo | null>,
+  onAvailable: (info: AppUpdateInfo) => void,
+): Promise<void> {
+  try {
+    const info = await check();
+    if (info) onAvailable(info);
+  } catch {
+    // 静默失败：启动路径不展示更新错误
+  }
 }

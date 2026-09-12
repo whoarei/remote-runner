@@ -13,6 +13,7 @@ function reportWindowError(error: unknown) {
 
 export function TitleBar({ closeReady, onAbout, onCheckUpdate }: { closeReady: boolean; onAbout: () => void; onCheckUpdate: () => void }) {
   const workspaceDir = useAppStore((state) => state.workspaceDir);
+  const availableUpdate = useAppStore((state) => state.availableUpdate);
   const dirty = useAppStore(dirtyDocument);
   const [maximized, setMaximized] = useState(false);
   const [focused, setFocused] = useState(true);
@@ -59,6 +60,17 @@ export function TitleBar({ closeReady, onAbout, onCheckUpdate }: { closeReady: b
         </div>
       </div>
       <div className="titlebar-controls" role="group" aria-label="窗口控制">
+        {availableUpdate && (
+          <button
+            type="button"
+            className="titlebar-button titlebar-update"
+            aria-label={`发现新版本 ${availableUpdate.latest_version}，点击查看更新`}
+            title={`发现新版本 ${availableUpdate.latest_version}，点击查看更新`}
+            onClick={onCheckUpdate}
+          >
+            更新
+          </button>
+        )}
         <button type="button" className="titlebar-button" aria-label="最小化" title="最小化" disabled={!desktop} onClick={() => windowAction("minimize")}>
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M1 6.5h10" stroke="currentColor" /></svg>
         </button>

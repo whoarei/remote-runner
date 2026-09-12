@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatBytes, formatDownloadProgress, installWithProgress, updateInstallBlocker } from "../src/updateStatus";
+import { checkForAvailableUpdate, formatBytes, formatDownloadProgress, installWithProgress, updateInstallBlocker } from "../src/updateStatus";
+import type { AppUpdateInfo } from "../src/api";
 
 test("installation protects unsaved files and all active run phases", () => {
   const state = { openFile: "main.py", fileContent: "saved", savedContent: "saved", loading: false, saving: false, starting: false, guarding: false, workspaceMutating: false, runs: {} };
@@ -42,4 +43,25 @@ test("formatDownloadProgress clamps percent at 100", () => {
 test("formatDownloadProgress without total shows downloaded only", () => {
   assert.equal(formatDownloadProgress(1024, null), "已下载 1.0 KB");
   assert.equal(formatDownloadProgress(1024, 0), "已下载 1.0 KB");
+});
+
+const sampleUpdate: AppUpdateInfo = {
+  current_version: "0.3.1",
+  latest_version: "0.3.2",
+  notes: null,
+  published_at: null,
+  download_url: "https://github.com/whoarei/remote-runner/releases/latest",
+  can_auto_install: true,
+};
+
+test("startup check surfaces only an available update", async () => {
+  const seen: AppUpdateInfo[] = [];
+  await checkForAvailableUpdate(async () => sampleUpdate, (info) => seen.push(info));
+  assert.deepEqual(seen, [sampleUpdate]);
+  await checkForAvailableUpdate(async () => null, (info) => seen.push(info));
+  assert.deepEqual(seen, [sampleUpdate]);
+});
+
+test("startup check swallows failures silently", async () => {
+  await checkForAvailableUpdate(async () => { throw new Error("offline"); }, () => assert.fail("must not notify on failure"));
 });
