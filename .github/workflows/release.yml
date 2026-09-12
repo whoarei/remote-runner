@@ -7,20 +7,40 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "版本标签 (例如 v0.1.0)，将基于该标签名创建 Release"
+        description: "已存在的稳定版本标签 (例如 v0.3.0)，构建该标签对应的代码"
         required: true
         type: string
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   build-windows:
     runs-on: windows-latest
 
     steps:
+      - name: Validate release tag
+        id: meta
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          $tag = $env:RELEASE_TAG
+          if ($tag -cnotmatch '\Av(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)\z') {
+            throw '发布标签必须为稳定版本 vX.Y.Z'
+          }
+          $version = $tag.Substring(1)
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.tag }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -41,52 +61,66 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Determine release tag
-        id: meta
+      - name: Require updater signing key
         shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
-          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
-            $tag = '${{ inputs.tag }}'
-          } else {
-            $tag = '${{ github.ref_name }}'
-          }
-          if ($tag -notmatch '^v\d+\.\d+\.\d+') {
-            Write-Error "Tag '$tag' 不符合 vX.Y.Z 格式"
-            exit 1
-          }
-          $version = $tag.TrimStart('v')
-          echo "tag=$tag" >> $env:GITHUB_OUTPUT
-          echo "version=$version" >> $env:GITHUB_OUTPUT
-
-      - name: Sync version into package.json and tauri.conf.json
-        shell: pwsh
-        run: |
-          $version = '${{ steps.meta.outputs.version }}'
-          foreach ($file in @('package.json', 'src-tauri/tauri.conf.json')) {
-            $json = Get-Content -Raw $file | ConvertFrom-Json
-            $json.version = $version
-            $json | ConvertTo-Json -Depth 32 | Set-Content -NoNewline $file
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            throw '请先配置 TAURI_SIGNING_PRIVATE_KEY；签名缺失时禁止发布升级产物'
           }
 
-      - name: Build Tauri app (exe + NSIS installer)
+      - name: Sync application and lockfile versions
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          node scripts/release.mjs sync $env:RELEASE_TAG
+
+      - name: Test frontend and release tooling
+        run: npm test
+
+      - name: Build Tauri app (exe + NSIS installer + updater artifacts)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # minisign 私钥：仅存在于 Secrets，用于 updater 产物签名与 latest.json 生成
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ steps.meta.outputs.tag }}
           releaseName: "Remote Runner ${{ steps.meta.outputs.tag }}"
           releaseDraft: true
           prerelease: false
-          args: --bundles nsis --target x86_64-pc-windows-msvc
+          generateReleaseNotes: true
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
+          # Tauri 2 signs the NSIS exe directly. Avoid inline JSON shell quoting.
+          args: --bundles nsis --target x86_64-pc-windows-msvc --config src-tauri/tauri.release.conf.json
 
       - name: Upload portable exe to release
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          $tag = '${{ steps.meta.outputs.tag }}'
-          $version = '${{ steps.meta.outputs.version }}'
+          $tag = $env:RELEASE_TAG
+          $version = $env:RELEASE_VERSION
           $exe = "src-tauri/target/x86_64-pc-windows-msvc/release/remote-runner.exe"
           $portable = "Remote.Runner_${version}_x64-portable.exe"
           Copy-Item $exe $portable
           gh release upload $tag $portable --clobber
+
+      - name: Validate draft updater manifest and assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          New-Item -ItemType Directory -Force release-check | Out-Null
+          gh release download $env:RELEASE_TAG --pattern latest.json --dir release-check --clobber
+          if ($LASTEXITCODE -ne 0) { throw '缺少 latest.json' }
+          gh release view $env:RELEASE_TAG --json assets | Set-Content release-check/assets.json
+          if ($LASTEXITCODE -ne 0) { throw '无法读取 Release 产物' }
+          node scripts/release.mjs verify release-check/latest.json release-check/assets.json $env:RELEASE_TAG

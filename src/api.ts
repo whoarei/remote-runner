@@ -73,6 +73,16 @@ export interface SaveWorkspaceRequest {
   bom: boolean;
 }
 
+export interface AppUpdateInfo {
+  current_version: string;
+  latest_version: string;
+  notes: string | null;
+  published_at: string | null;
+  download_url: string;
+  /** false 表示 portable 形态，只能回退到手动下载（方案 B） */
+  can_auto_install: boolean;
+}
+
 export function errorMessage(error: unknown): string {
   if (typeof error === "object" && error !== null && "message" in error) return String(error.message);
   return String(error);
@@ -112,6 +122,9 @@ export const api = {
   listRunningRuns: () => invoke<RunStatus[]>("list_running_runs"),
   getRunHistory: () => invoke<RunStatus[]>("get_run_history"),
   drainRunEvents: () => invoke<RunEvent[]>("drain_run_events"),
+
+  checkAppUpdate: () => invoke<AppUpdateInfo | null>("check_app_update"),
+  installAppUpdate: (expectedVersion: string) => invoke<void>("install_app_update", { expectedVersion }),
 };
 
 // One bounded IPC response at a time: a slow/hidden WebView cannot accumulate

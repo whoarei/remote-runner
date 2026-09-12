@@ -177,8 +177,10 @@ pub fn delete_workspace_entry(
 #[tauri::command]
 pub fn run_script(
     state: tauri::State<'_, AppState>,
+    updates: tauri::State<'_, crate::update::UpdateState>,
     request: crate::runner::RunRequest,
 ) -> Result<String> {
+    let _update_guard = updates.allow_run()?;
     let _guard = crate::workspace::FILE_OPERATIONS.lock();
     let device = state.device_store.get(&request.device_id)?;
     state

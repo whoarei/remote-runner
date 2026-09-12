@@ -71,7 +71,7 @@ function MenuItem({ entry, close }: { entry: MenuEntry; close: () => void }) {
   );
 }
 
-export function MenuBar({ onAbout }: { onAbout: () => void }) {
+export function MenuBar({ onAbout, onCheckUpdate }: { onAbout: () => void; onCheckUpdate: () => void }) {
   const [openMenu, setOpenMenu] = useState<number | null>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const layout = useAppStore((state) => state.layout);
@@ -141,6 +141,7 @@ export function MenuBar({ onAbout }: { onAbout: () => void }) {
     {
       label: "帮助",
       entries: [
+        { label: "检查更新…", disabled: !isTauri(), onSelect: onCheckUpdate },
         { label: "关于 Remote Runner…", onSelect: onAbout },
       ],
     },

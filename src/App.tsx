@@ -24,6 +24,7 @@ export default function App() {
   const handleRunEvents = useAppStore((s) => s.handleRunEvents);
   const [closeReady, setCloseReady] = useState(false);
   const aboutDialog = useRef<HTMLDialogElement>(null);
+  const [aboutAutoCheck, setAboutAutoCheck] = useState(0);
 
   useEffect(() => {
     const report = (error: unknown) => useAppStore.setState({ editorError: errorMessage(error) });
@@ -43,7 +44,7 @@ export default function App() {
       event.preventDefault();
       if (closing) return;
       const state = useAppStore.getState();
-      if (state.loading || state.saving || state.starting || state.guarding) return;
+      if (state.loading || state.saving || state.starting || state.guarding || state.updating) return;
       closing = true;
       try {
         if (await state.confirmUnsaved()) await getCurrentWindow().destroy();
@@ -123,8 +124,15 @@ export default function App() {
   return (
     <div className="app">
       <UnsavedDialog />
-      <AboutDialog dialogRef={aboutDialog} />
-      <TitleBar closeReady={closeReady} onAbout={() => aboutDialog.current?.showModal()} />
+      <AboutDialog dialogRef={aboutDialog} autoCheckNonce={aboutAutoCheck} />
+      <TitleBar
+        closeReady={closeReady}
+        onAbout={() => aboutDialog.current?.showModal()}
+        onCheckUpdate={() => {
+          setAboutAutoCheck((nonce) => nonce + 1);
+          aboutDialog.current?.showModal();
+        }}
+      />
       <header className="app-header">
         <DeviceBar />
       </header>

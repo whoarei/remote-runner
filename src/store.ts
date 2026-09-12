@@ -8,6 +8,7 @@ import { DEFAULT_LAYOUT, LayoutState, loadLayout, normalizeLayout, saveLayout } 
 import { collectScripts, dropSubtree, isWithin, joinPath, nameOf, parentOf, rekeySubtree, rootTree, withNode, WORKSPACE_ROOT, WorkspacePath, WorkspaceTree } from "./workspaceTree";
 
 interface AppState {
+  updating: boolean;
   devices: DeviceProfile[];
   selectedDeviceId: string | null;
 
@@ -111,6 +112,7 @@ function pruneRuns(state: Pick<AppState, "runs" | "history" | "outputBuffers" | 
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
+  updating: false,
   devices: [],
   selectedDeviceId: null,
 
@@ -397,6 +399,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   startRun: async (request) => {
     const state = get();
+    if (state.updating) throw new Error("正在升级，请等待应用重新启动");
     if (state.loading || state.saving || state.starting || state.guarding) throw new Error("请等待当前文件操作完成");
     if ((request.workspace_dir ?? null) !== state.workspaceDir) throw new Error("工作区已改变，请重新运行");
     if (!request.device_id || (request.kind === "command" ? !request.command?.trim() : !request.entry)) throw new Error("请选择设备并填写入口或命令");

@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "com.devrunner.remote-runner",
   "productName": "Remote Runner",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -27,6 +27,22 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": []
+    "icon": [],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "windows": {
+        "installMode": "passive"
+      },
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhGOUIzNEFCODRFOTE4ODMKUldTREdPbUVxelNiandxMlMxbm5EbnUrN3ZXekFEaXFIeUYvcHhxeTNaOHNVTUNzYzE5VkhrQS8K",
+      "endpoints": [
+        "https://github.com/whoarei/remote-runner/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

@@ -1,11 +1,132 @@
-import { useEffect, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { productName, version as buildVersion } from "../../src-tauri/tauri.conf.json";
 import appIcon from "../../src-tauri/icons/128x128.png";
+import { api, errorMessage, type AppUpdateInfo } from "../api";
+import { formatDownloadProgress, installWithProgress, updateInstallBlocker, type UpdateProgress } from "../updateStatus";
+import { useAppStore } from "../store";
 
-export function AboutDialog({ dialogRef }: { dialogRef: RefObject<HTMLDialogElement> }) {
+const RELEASES_URL = "https://github.com/whoarei/remote-runner/releases/latest";
+
+type UpdatePhase =
+  | { kind: "idle" }
+  | { kind: "checking" }
+  | { kind: "uptodate" }
+  | { kind: "available"; info: AppUpdateInfo }
+  | { kind: "downloading"; info: AppUpdateInfo; downloaded: number; total: number | null }
+  | { kind: "verifying" }
+  | { kind: "installing" }
+  | { kind: "error"; message: string };
+
+interface UpdateSectionProps {
+  autoCheckNonce: number;
+}
+
+/** 检查更新 + 升级操作区。方案 A（安装形态）应用内自动升级，方案 B（portable）回退手动下载。 */
+function UpdateSection({ autoCheckNonce }: UpdateSectionProps) {
+  const [phase, setPhase] = useState<UpdatePhase>({ kind: "idle" });
+  const busyRef = useRef(false);
+  const mounted = useRef(true);
+  const blocker = useAppStore(updateInstallBlocker);
+
+  const check = useCallback(async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setPhase({ kind: "checking" });
+    try {
+      const info = await api.checkAppUpdate();
+      if (mounted.current) setPhase(info ? { kind: "available", info } : { kind: "uptodate" });
+    } catch (error) {
+      if (mounted.current) setPhase({ kind: "error", message: errorMessage(error) });
+    } finally { busyRef.current = false; }
+  }, []);
+
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+
+  useEffect(() => {
+    if (autoCheckNonce > 0) void check();
+  }, [autoCheckNonce, check]);
+
+  const install = useCallback(async (info: AppUpdateInfo) => {
+    if (busyRef.current) return;
+    const blocked = updateInstallBlocker(useAppStore.getState());
+    if (blocked) { setPhase({ kind: "error", message: blocked }); return; }
+    busyRef.current = true;
+    useAppStore.setState({ updating: true });
+    setPhase({ kind: "downloading", info, downloaded: 0, total: null });
+    try {
+      await installWithProgress(info.latest_version,
+        () => listen<UpdateProgress>("app-update://progress", ({ payload }) => {
+          if (!mounted.current) return;
+          if (payload.phase === "verifying" || payload.phase === "installing") setPhase({ kind: payload.phase });
+          else setPhase({ kind: "downloading", info, downloaded: payload.downloaded, total: payload.total });
+        }), api.installAppUpdate);
+      // On Windows a successful install command exits the process. Returning is unexpected.
+      throw new Error("安装程序未接管应用，请重试或手动下载更新");
+    } catch (error) {
+      if (mounted.current) setPhase({ kind: "error", message: `自动升级失败，可改用手动下载：${errorMessage(error)}` });
+    } finally {
+      busyRef.current = false;
+      useAppStore.setState({ updating: false });
+    }
+  }, []);
+
+  const openDownload = useCallback(() => {
+    void openUrl(RELEASES_URL).catch((error) => {
+      setPhase({ kind: "error", message: `无法打开浏览器：${errorMessage(error)}` });
+    });
+  }, []);
+
+  const busy = phase.kind === "checking" || phase.kind === "downloading" || phase.kind === "verifying" || phase.kind === "installing";
+
+  return (
+    <section className="about-update" aria-label="检查更新" aria-live="polite">
+      <div className="about-update-row">
+        <button type="button" className="primary" disabled={busy} onClick={() => void check()}>
+          {phase.kind === "checking" ? "正在检查…" : "检查更新"}
+        </button>
+        {phase.kind === "available" && (
+          <>
+            {phase.info.can_auto_install && (
+              <button type="button" disabled={!!blocker} onClick={() => void install(phase.info)}>下载并安装（将重启应用）</button>
+            )}
+            <button type="button" onClick={openDownload}>打开下载页面</button>
+          </>
+        )}
+        {phase.kind === "error" && (
+          <button type="button" onClick={openDownload}>打开下载页面</button>
+        )}
+      </div>
+      {phase.kind === "uptodate" && <p className="about-update-status">已是最新版本。</p>}
+      {phase.kind === "available" && (
+        <div className="about-update-status">
+          <p>
+            发现新版本 {phase.info.latest_version}（当前 {phase.info.current_version}）。
+            {!phase.info.can_auto_install && "未检测到受支持的安装版，请手动下载更新。"}
+          </p>
+          {phase.info.can_auto_install && blocker && <p className="about-update-error">{blocker}</p>}
+          {phase.info.notes && <pre className="about-update-notes">{phase.info.notes}</pre>}
+        </div>
+      )}
+      {phase.kind === "downloading" && (
+        <div className="about-update-status">
+          <progress value={phase.total ? phase.downloaded : undefined} max={phase.total ?? undefined} />
+          <p>{formatDownloadProgress(phase.downloaded, phase.total)}</p>
+        </div>
+      )}
+      {phase.kind === "verifying" && <p className="about-update-status">下载完成，正在验证签名…</p>}
+      {phase.kind === "installing" && <p className="about-update-status">正在启动安装程序，应用将退出并在安装后重新打开…</p>}
+      {phase.kind === "error" && <p className="about-update-status about-update-error">{phase.message}</p>}
+    </section>
+  );
+}
+
+export function AboutDialog({ dialogRef, autoCheckNonce = 0 }: { dialogRef: RefObject<HTMLDialogElement>; autoCheckNonce?: number }) {
   const [version, setVersion] = useState(buildVersion);
+  const updating = useAppStore((state) => state.updating);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -17,7 +138,9 @@ export function AboutDialog({ dialogRef }: { dialogRef: RefObject<HTMLDialogElem
 
   return (
     <dialog ref={dialogRef} className="about-dialog" aria-labelledby="about-title" aria-describedby="about-description"
+      onCancel={(event) => { if (useAppStore.getState().updating) event.preventDefault(); }}
       onClick={(event) => {
+        if (useAppStore.getState().updating) return;
         if (event.target !== event.currentTarget) return;
         const bounds = event.currentTarget.getBoundingClientRect();
         if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) {
@@ -38,8 +161,9 @@ export function AboutDialog({ dialogRef }: { dialogRef: RefObject<HTMLDialogElem
         <li>WSL</li>
       </ul>
       <p className="about-features">工作区管理 · 交互控制台 · 运行历史</p>
+      {isTauri() && <UpdateSection autoCheckNonce={autoCheckNonce} />}
       <form method="dialog" className="dialog-actions">
-        <button type="submit" className="primary" autoFocus>关闭</button>
+        <button type="submit" disabled={updating} autoFocus>关闭</button>
       </form>
     </dialog>
   );

@@ -6,6 +6,7 @@ pub mod process;
 pub mod runner;
 pub mod serial;
 pub mod ssh;
+pub mod update;
 pub mod workspace;
 pub mod workspace_upload;
 pub mod wsl;
@@ -24,6 +25,9 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(update::UpdateState::default())
         .setup(|app| {
             let config_dir = app
                 .path()
@@ -65,6 +69,8 @@ pub fn run() {
             commands::list_running_runs,
             commands::get_run_history,
             commands::drain_run_events,
+            update::check_app_update,
+            update::install_app_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

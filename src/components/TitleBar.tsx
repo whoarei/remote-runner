@@ -11,7 +11,7 @@ function reportWindowError(error: unknown) {
   useAppStore.setState({ editorError: `窗口操作失败：${errorMessage(error)}` });
 }
 
-export function TitleBar({ closeReady, onAbout }: { closeReady: boolean; onAbout: () => void }) {
+export function TitleBar({ closeReady, onAbout, onCheckUpdate }: { closeReady: boolean; onAbout: () => void; onCheckUpdate: () => void }) {
   const workspaceDir = useAppStore((state) => state.workspaceDir);
   const dirty = useAppStore(dirtyDocument);
   const [maximized, setMaximized] = useState(false);
@@ -51,7 +51,7 @@ export function TitleBar({ closeReady, onAbout }: { closeReady: boolean; onAbout
       <div className="titlebar-brand">
         <img className="titlebar-logo" src={appIcon} alt="" width="18" height="18" />
       </div>
-      <MenuBar onAbout={onAbout} />
+      <MenuBar onAbout={onAbout} onCheckUpdate={onCheckUpdate} />
       <div className="titlebar-drag" data-tauri-drag-region>
         <div className="titlebar-workspace" data-tauri-drag-region title={workspaceDir ?? "尚未打开工作区"}>
           <span className="titlebar-workspace-name">{workspaceName ?? "未打开工作区"}</span>

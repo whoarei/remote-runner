@@ -31,6 +31,9 @@ pub enum RunnerError {
 
     #[error("task failed: {0}")]
     TaskFailed(String),
+
+    #[error("update error: {0}")]
+    Update(String),
 }
 
 impl From<russh::Error> for RunnerError {
