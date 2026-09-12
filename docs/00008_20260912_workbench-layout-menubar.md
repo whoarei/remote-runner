@@ -37,6 +37,7 @@ interface LayoutState {
   workspaceCollapsed: boolean; // Workspace 折叠（只显示标题条），独立于显隐
   historyCollapsed: boolean;   // Run History 折叠
   consoleCollapsed: boolean;   // 控制台折叠（保留运行工具栏与标题条）
+  editorCollapsed: boolean;    // 编辑区折叠（00014 新增：保留编辑器标题条，控制台占满释放的高度）
   sidebarWidth: number;        // 侧栏宽度 px，范围 [SIDEBAR_MIN, SIDEBAR_MAX]
   sidebarPosition: "left" | "right";
   sideSplit: number;           // Workspace 占侧栏高度比例，范围 [0.2, 0.8]

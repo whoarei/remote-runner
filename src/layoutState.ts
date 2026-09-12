@@ -16,6 +16,8 @@ export interface LayoutState {
   historyCollapsed: boolean;
   /** 控制台折叠：折叠后只保留运行工具栏和标题条，终端保持存活仅隐藏 */
   consoleCollapsed: boolean;
+  /** 编辑区折叠：折叠后只保留编辑器标题条，释放的高度由展开中的控制台占满 */
+  editorCollapsed: boolean;
   /** 侧栏宽度 px */
   sidebarWidth: number;
   sidebarPosition: "left" | "right";
@@ -32,6 +34,7 @@ export const DEFAULT_LAYOUT: LayoutState = {
   workspaceCollapsed: false,
   historyCollapsed: false,
   consoleCollapsed: false,
+  editorCollapsed: false,
   sidebarWidth: 260,
   sidebarPosition: "left",
   sideSplit: 0.6,
@@ -70,6 +73,7 @@ export function normalizeLayout(value: unknown): LayoutState {
     workspaceCollapsed: clampBoolean(source.workspaceCollapsed, DEFAULT_LAYOUT.workspaceCollapsed),
     historyCollapsed: clampBoolean(source.historyCollapsed, DEFAULT_LAYOUT.historyCollapsed),
     consoleCollapsed: clampBoolean(source.consoleCollapsed, DEFAULT_LAYOUT.consoleCollapsed),
+    editorCollapsed: clampBoolean(source.editorCollapsed, DEFAULT_LAYOUT.editorCollapsed),
     sidebarWidth: clampSidebarWidth(source.sidebarWidth as number),
     sidebarPosition: source.sidebarPosition === "right" ? "right" : "left",
     sideSplit: clampSideSplit(source.sideSplit as number),

@@ -480,6 +480,10 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 }
 
 .editor-filename { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor-collapse { border: 0; background: transparent; color: #888; padding: 0 2px; cursor: pointer; font-size: 12px; line-height: 1; }
+.editor-collapse:hover { color: #ccc; }
+.editor-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.editor-body.collapsed { display: none; }
 .code-editor { flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
 .editor-status { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 4px 12px; border-top: 1px solid #2a2b30; color: #9ba4b4; font-size: 11px; }
 .editor-error { width: 100%; padding: 8px 12px; color: #fca5a5; background: #351f27; font-size: 12px; overflow-wrap: anywhere; }

@@ -43,12 +43,13 @@ test("normalizeLayout falls back to defaults for garbage input", () => {
 });
 
 test("normalizeLayout keeps valid fields and fills missing ones", () => {
-  const layout = normalizeLayout({ sidebarWidth: 300, consoleVisible: false, sidebarPosition: "right", workspaceCollapsed: true, consoleCollapsed: true });
+  const layout = normalizeLayout({ sidebarWidth: 300, consoleVisible: false, sidebarPosition: "right", workspaceCollapsed: true, consoleCollapsed: true, editorCollapsed: true });
   assert.equal(layout.sidebarWidth, 300);
   assert.equal(layout.consoleVisible, false);
   assert.equal(layout.sidebarPosition, "right");
   assert.equal(layout.workspaceCollapsed, true);
   assert.equal(layout.consoleCollapsed, true);
+  assert.equal(layout.editorCollapsed, true);
   assert.equal(layout.historyCollapsed, DEFAULT_LAYOUT.historyCollapsed);
   assert.equal(layout.workspaceVisible, DEFAULT_LAYOUT.workspaceVisible);
   assert.equal(layout.sideSplit, DEFAULT_LAYOUT.sideSplit);
@@ -61,12 +62,14 @@ test("normalizeLayout clamps out-of-range values and rejects wrong types", () =>
     sideSplit: 0,
     sidebarPosition: "up",
     workspaceVisible: "yes",
+    editorCollapsed: 1,
   });
   assert.equal(layout.sidebarWidth, SIDEBAR_MAX);
   assert.equal(layout.consoleHeight, CONSOLE_MIN);
   assert.equal(layout.sideSplit, SIDE_SPLIT_MIN);
   assert.equal(layout.sidebarPosition, "left");
   assert.equal(layout.workspaceVisible, DEFAULT_LAYOUT.workspaceVisible);
+  assert.equal(layout.editorCollapsed, DEFAULT_LAYOUT.editorCollapsed);
 });
 
 test("clamp helpers bound values and fall back on non-finite input", () => {

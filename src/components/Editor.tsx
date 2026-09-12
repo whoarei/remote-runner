@@ -81,7 +81,7 @@ function CodeEditor({ language, locked, onCursor, focusToolbar }: {
   return <div className="code-editor" ref={parent} />;
 }
 
-export function Editor() {
+export function Editor({ collapsed = false, onToggleCollapse }: { collapsed?: boolean; onToggleCollapse?: () => void }) {
   const state = useAppStore(useShallow((s) => ({ openFile: s.openFile, dirty: dirtyDocument(s),
     language: s.language, generation: s.documentGeneration, eol: s.eol, bom: s.bom,
     loading: s.loading, saving: s.saving, starting: s.starting, guarding: s.guarding,
@@ -95,6 +95,8 @@ export function Editor() {
     </div>}
     {!state.openFile ? <p>{state.loading ? "正在打开…" : "在左侧 Workspace 中选择脚本文件，或用下方命令模式运行。"}</p> : <>
       <div className="editor-title">
+        <button className="editor-collapse" aria-label={collapsed ? "展开编辑区" : "折叠编辑区"} aria-expanded={!collapsed}
+          title={collapsed ? "展开编辑区" : "折叠编辑区"} onClick={onToggleCollapse}>{collapsed ? "▸" : "▾"}</button>
         <span className="editor-filename" title={state.openFile}>{state.openFile}{state.dirty ? " ●" : ""}</span>
         <select ref={languageSelect} aria-label="编辑器语言" value={state.language} disabled={locked}
           onChange={(event) => useAppStore.getState().setLanguage(event.target.value as EditorLanguage)}>
@@ -103,12 +105,15 @@ export function Editor() {
         <button disabled={locked || state.saving || !state.dirty || state.uploadBusy} title="保存到本地文件 (Ctrl+S)"
           onClick={() => void useAppStore.getState().saveFile()}>{state.saving ? "保存中…" : "保存"}</button>
       </div>
-      <CodeEditor key={state.generation} language={state.language} locked={locked} onCursor={setCursor}
-        focusToolbar={() => languageSelect.current?.focus()} />
-      <div className="editor-status" role="status">
-        <span>{state.loading ? "正在打开…" : state.starting ? "正在保存并启动…" : state.saving ? "保存中…" : state.error ? "操作失败" : state.dirty ? "未保存" : "已保存"}
-          {state.uploadBusy ? " · 任务准备/同步/停止期间暂停保存" : ""}</span>
-        <span>{cursor} · UTF-8{state.bom ? " BOM" : ""} · {state.eol.toUpperCase()} · Esc 返回工具栏</span>
+      {/* 折叠时编辑器保持挂载仅隐藏 DOM，保留撤销历史、滚动位置与选区 */}
+      <div className={`editor-body${collapsed ? " collapsed" : ""}`}>
+        <CodeEditor key={state.generation} language={state.language} locked={locked} onCursor={setCursor}
+          focusToolbar={() => languageSelect.current?.focus()} />
+        <div className="editor-status" role="status">
+          <span>{state.loading ? "正在打开…" : state.starting ? "正在保存并启动…" : state.saving ? "保存中…" : state.error ? "操作失败" : state.dirty ? "未保存" : "已保存"}
+            {state.uploadBusy ? " · 任务准备/同步/停止期间暂停保存" : ""}</span>
+          <span>{cursor} · UTF-8{state.bom ? " BOM" : ""} · {state.eol.toUpperCase()} · Esc 返回工具栏</span>
+        </div>
       </div>
     </>}
   </div>;

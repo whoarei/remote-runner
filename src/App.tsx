@@ -147,12 +147,17 @@ export default function App() {
       <main className="app-main">
         {layout.sidebarPosition === "left" && sidebar}
         <div className="workbench">
-          <section className="center">
-            <Suspense fallback={<div className="editor empty">正在加载编辑器…</div>}><Editor /></Suspense>
+          <section className="center" style={layout.editorCollapsed ? { flex: "0 0 auto" } : undefined}>
+            <Suspense fallback={<div className="editor empty">正在加载编辑器…</div>}>
+              <Editor
+                collapsed={layout.editorCollapsed}
+                onToggleCollapse={() => setLayout({ editorCollapsed: !layout.editorCollapsed })}
+              />
+            </Suspense>
           </section>
           {(
             <>
-              {layout.consoleVisible && !layout.consoleCollapsed && (
+              {layout.consoleVisible && !layout.consoleCollapsed && !layout.editorCollapsed && (
                 <SplitHandle
                   direction="horizontal"
                   label="调整控制台高度"
@@ -160,7 +165,11 @@ export default function App() {
                   onReset={() => setLayout({ consoleHeight: DEFAULT_LAYOUT.consoleHeight })}
                 />
               )}
-              <footer className="app-footer" hidden={!layout.consoleVisible} style={layout.consoleCollapsed ? undefined : { height: layout.consoleHeight }}>
+              <footer className="app-footer" hidden={!layout.consoleVisible} style={
+                layout.consoleCollapsed ? undefined
+                  : layout.editorCollapsed ? { flex: 1 } // 编辑区折叠时控制台占满释放的高度
+                  : { height: layout.consoleHeight }
+              }>
                 <ConsolePanel
                   visible={layout.consoleVisible}
                   collapsed={layout.consoleCollapsed}

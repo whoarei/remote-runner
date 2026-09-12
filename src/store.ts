@@ -338,6 +338,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         set((s) => ({ openFile: name, fileContent: doc.content, savedContent: doc.content,
           revision: doc.revision, eol: doc.eol, bom: doc.bom, language: inferLanguage(name),
           conflict: false, documentGeneration: s.documentGeneration + 1 }));
+        // 打开文件意味着要看内容，折叠中的编辑区自动展开
+        if (get().layout.editorCollapsed) get().setLayout({ editorCollapsed: false });
       }
     } catch (e) {
       if (sequence === loadSequence) set({ editorError: errorMessage(e) });
