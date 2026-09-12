@@ -2,6 +2,7 @@ import { useEffect, useState, type RefObject } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { isTauri } from "@tauri-apps/api/core";
 import { productName, version as buildVersion } from "../../src-tauri/tauri.conf.json";
+import appIcon from "../../src-tauri/icons/128x128.png";
 
 export function AboutDialog({ dialogRef }: { dialogRef: RefObject<HTMLDialogElement> }) {
   const [version, setVersion] = useState(buildVersion);
@@ -24,10 +25,7 @@ export function AboutDialog({ dialogRef }: { dialogRef: RefObject<HTMLDialogElem
         }
       }}>
       <div className="about-heading">
-        <svg className="about-logo" width="40" height="40" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <rect x="1.5" y="2.5" width="17" height="15" rx="3" stroke="currentColor" />
-          <path d="m5 7 3 3-3 3m6 0h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+        <img className="about-logo" src={appIcon} alt="" width="40" height="40" />
         <div>
           <h2 id="about-title">关于 {productName}</h2>
           <p className="about-version">版本 {version}</p>

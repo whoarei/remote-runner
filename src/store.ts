@@ -3,6 +3,7 @@ import { api, DeviceProfile, RunEvent, RunStatus, WorkspaceEntry, RunRequest, er
 import { ChangeChoice, dirtyDocument, EditorLanguage, inferLanguage, uploadBusy } from "./editorDocument";
 import { appendOutput, OutputBuffer } from "./outputBuffer";
 import { loadWorkspaceHistory, rememberWorkspace, saveWorkspaceHistory } from "./workspaceHistory";
+import { DEFAULT_LAYOUT, LayoutState, loadLayout, normalizeLayout, saveLayout } from "./layoutState";
 
 interface AppState {
   devices: DeviceProfile[];
@@ -36,6 +37,10 @@ interface AppState {
   consoleSeq: number;
 
   history: RunStatus[];
+
+  layout: LayoutState;
+  setLayout: (patch: Partial<LayoutState>) => void;
+  resetLayout: () => void;
 
   loadDevices: () => Promise<void>;
   selectDevice: (id: string | null) => void;
@@ -84,6 +89,20 @@ export const useAppStore = create<AppState>((set, get) => ({
   consoleSeq: 0,
 
   history: [],
+
+  layout: loadLayout(),
+
+  setLayout: (patch) => {
+    const layout = normalizeLayout({ ...get().layout, ...patch });
+    saveLayout(layout);
+    set({ layout });
+  },
+
+  resetLayout: () => {
+    const layout = { ...DEFAULT_LAYOUT };
+    saveLayout(layout);
+    set({ layout });
+  },
 
   loadDevices: async () => {
     const devices = await api.listDevices();

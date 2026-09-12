@@ -4,11 +4,13 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { api } from "../api";
 import { useAppStore } from "../store";
+import { PanelTitle } from "./PanelTitle";
 
 /**
  * Run Console：绑定的是“远程进程”的 stdin/stdout/stderr，不是 SSH shell。
+ * 折叠时终端保持挂载，仅隐藏 DOM，避免 xterm 重新附着和输出丢失。
  */
-export function RunConsole() {
+export function RunConsole({ collapsed, onToggleCollapse }: { collapsed: boolean; onToggleCollapse: () => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -129,16 +131,15 @@ export function RunConsole() {
 
   return (
     <div className="run-console">
-      <div className="console-header">
-        <span>Run Console</span>
+      <PanelTitle className="console-header" title="Run Console" collapsed={collapsed} onToggle={onToggleCollapse}>
         {activeRun && (
           <span className={`run-state state-${activeRun.state}`}>
             {activeRun.run_id} · {activeRun.state}
             {activeRun.exit_code != null && ` · exit=${activeRun.exit_code}`}
           </span>
         )}
-      </div>
-      <div ref={containerRef} className="console-body" />
+      </PanelTitle>
+      <div ref={containerRef} className={`console-body${collapsed ? " collapsed" : ""}`} />
     </div>
   );
 }

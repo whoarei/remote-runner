@@ -4,6 +4,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { errorMessage } from "../api";
 import { dirtyDocument } from "../editorDocument";
 import { useAppStore } from "../store";
+import { MenuBar } from "./MenuBar";
+import appIcon from "../../src-tauri/icons/64x64.png";
 
 function reportWindowError(error: unknown) {
   useAppStore.setState({ editorError: `窗口操作失败：${errorMessage(error)}` });
@@ -46,20 +48,16 @@ export function TitleBar({ closeReady, onAbout }: { closeReady: boolean; onAbout
 
   return (
     <div className={`titlebar${focused ? "" : " titlebar-inactive"}`}>
+      <div className="titlebar-brand">
+        <img className="titlebar-logo" src={appIcon} alt="" width="18" height="18" />
+      </div>
+      <MenuBar onAbout={onAbout} />
       <div className="titlebar-drag" data-tauri-drag-region>
-        <div className="titlebar-brand">
-          <svg className="titlebar-logo" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <rect x="1.5" y="2.5" width="17" height="15" rx="3" stroke="currentColor" />
-            <path d="m5 7 3 3-3 3m6 0h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          <span>Remote Runner</span>
-        </div>
         <div className="titlebar-workspace" data-tauri-drag-region title={workspaceDir ?? "尚未打开工作区"}>
           <span className="titlebar-workspace-name">{workspaceName ?? "未打开工作区"}</span>
           {dirty && <span className="titlebar-dirty" role="img" aria-label="有未保存的更改" />}
         </div>
       </div>
-      <button type="button" className="titlebar-button titlebar-about" title="关于 Remote Runner" aria-haspopup="dialog" onClick={onAbout}>关于</button>
       <div className="titlebar-controls" role="group" aria-label="窗口控制">
         <button type="button" className="titlebar-button" aria-label="最小化" title="最小化" disabled={!desktop} onClick={() => windowAction("minimize")}>
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M1 6.5h10" stroke="currentColor" /></svg>

@@ -9,10 +9,12 @@ import { HistoryPanel } from "./components/HistoryPanel";
 import { UnsavedDialog } from "./components/UnsavedDialog";
 import { TitleBar } from "./components/TitleBar";
 import { AboutDialog } from "./components/AboutDialog";
+import { SplitHandle } from "./components/SplitHandle";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@tauri-apps/api/core";
 import { dirtyDocument } from "./editorDocument";
 import { errorMessage } from "./api";
+import { clampSidebarWidth, clampConsoleHeight, clampSideSplit, DEFAULT_LAYOUT } from "./layoutState";
 
 const Editor = lazy(() => import("./components/Editor").then((module) => ({ default: module.Editor })));
 
@@ -52,6 +54,71 @@ export default function App() {
     return () => { disposed = true; window.removeEventListener("beforeunload", beforeUnload); void unlisten.then((fn) => fn()).catch(() => {}); };
   }, []);
 
+  const layout = useAppStore((state) => state.layout);
+  const setLayout = useAppStore((state) => state.setLayout);
+  const sideRef = useRef<HTMLElement>(null);
+  const sidebarVisible = layout.workspaceVisible || layout.historyVisible;
+  const bothSidePanels = layout.workspaceVisible && layout.historyVisible;
+  const bothExpanded = bothSidePanels && !layout.workspaceCollapsed && !layout.historyCollapsed;
+
+  const sidebar = sidebarVisible && (
+    <>
+      {layout.sidebarPosition === "right" && (
+        <SplitHandle
+          direction="vertical"
+          label="调整侧栏宽度"
+          onDelta={(delta) => setLayout({ sidebarWidth: clampSidebarWidth(layout.sidebarWidth - delta) })}
+          onReset={() => setLayout({ sidebarWidth: DEFAULT_LAYOUT.sidebarWidth })}
+        />
+      )}
+      <aside className="side" style={{ width: layout.sidebarWidth }} ref={sideRef}>
+        {layout.workspaceVisible && (
+          <div className="side-section" style={
+            layout.workspaceCollapsed ? { flex: "0 0 auto" }
+              : bothExpanded ? { flexGrow: layout.sideSplit, flexBasis: 0 }
+              : undefined
+          }>
+            <WorkspacePanel
+              collapsed={layout.workspaceCollapsed}
+              onToggleCollapse={() => setLayout({ workspaceCollapsed: !layout.workspaceCollapsed })}
+            />
+          </div>
+        )}
+        {bothExpanded && (
+          <SplitHandle
+            direction="horizontal"
+            label="调整工作区与历史面板比例"
+            onDelta={(delta) => {
+              const height = sideRef.current?.clientHeight ?? 0;
+              if (height > 0) setLayout({ sideSplit: clampSideSplit(layout.sideSplit + delta / height) });
+            }}
+            onReset={() => setLayout({ sideSplit: DEFAULT_LAYOUT.sideSplit })}
+          />
+        )}
+        {layout.historyVisible && (
+          <div className="side-section" style={
+            layout.historyCollapsed ? { flex: "0 0 auto" }
+              : bothExpanded ? { flexGrow: 1 - layout.sideSplit, flexBasis: 0 }
+              : undefined
+          }>
+            <HistoryPanel
+              collapsed={layout.historyCollapsed}
+              onToggleCollapse={() => setLayout({ historyCollapsed: !layout.historyCollapsed })}
+            />
+          </div>
+        )}
+      </aside>
+      {layout.sidebarPosition === "left" && (
+        <SplitHandle
+          direction="vertical"
+          label="调整侧栏宽度"
+          onDelta={(delta) => setLayout({ sidebarWidth: clampSidebarWidth(layout.sidebarWidth + delta) })}
+          onReset={() => setLayout({ sidebarWidth: DEFAULT_LAYOUT.sidebarWidth })}
+        />
+      )}
+    </>
+  );
+
   return (
     <div className="app">
       <UnsavedDialog />
@@ -61,18 +128,33 @@ export default function App() {
         <DeviceBar />
       </header>
       <main className="app-main">
-        <aside className="side">
-          <WorkspacePanel />
-          <HistoryPanel />
-        </aside>
-        <section className="center">
-          <Suspense fallback={<div className="editor empty">正在加载编辑器…</div>}><Editor /></Suspense>
-        </section>
+        {layout.sidebarPosition === "left" && sidebar}
+        <div className="workbench">
+          <section className="center">
+            <Suspense fallback={<div className="editor empty">正在加载编辑器…</div>}><Editor /></Suspense>
+          </section>
+          {layout.consoleVisible && (
+            <>
+              {!layout.consoleCollapsed && (
+                <SplitHandle
+                  direction="horizontal"
+                  label="调整控制台高度"
+                  onDelta={(delta) => setLayout({ consoleHeight: clampConsoleHeight(layout.consoleHeight - delta) })}
+                  onReset={() => setLayout({ consoleHeight: DEFAULT_LAYOUT.consoleHeight })}
+                />
+              )}
+              <footer className="app-footer" style={layout.consoleCollapsed ? undefined : { height: layout.consoleHeight }}>
+                <RunToolbar />
+                <RunConsole
+                  collapsed={layout.consoleCollapsed}
+                  onToggleCollapse={() => setLayout({ consoleCollapsed: !layout.consoleCollapsed })}
+                />
+              </footer>
+            </>
+          )}
+        </div>
+        {layout.sidebarPosition === "right" && sidebar}
       </main>
-      <footer className="app-footer">
-        <RunToolbar />
-        <RunConsole />
-      </footer>
     </div>
   );
 }
