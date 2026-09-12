@@ -2,7 +2,7 @@
 
 ## Project scope
 
-Remote Runner is a Tauri desktop application for running Python, Shell, and command workloads on embedded Linux devices. The frontend is React/TypeScript; the backend is Rust with Tokio.
+Remote Runner is a Tauri desktop application for running Python, Shell, and command workloads on remote devices. Any device reachable through one of the supported transports (SSH, serial, etc.) can be used — it is not limited to embedded Linux devices; Linux servers, dev boards, VMs, and local WSL distributions all work. The frontend is React/TypeScript; the backend is Rust with Tokio.
 
 The supported transports are:
 

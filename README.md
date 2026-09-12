@@ -1,6 +1,6 @@
-# Remote Runner：嵌入式 Linux 远程脚本运行工具
+# Remote Runner：远程脚本运行工具
 
-Remote Runner 是基于 Tauri 的桌面工具，用于在嵌入式 Linux 设备上运行脚本和命令。它提供本地工作区界面、xterm 控制台、运行状态与历史记录，React 前端通过统一的运行接口调用 Rust 后端。
+Remote Runner 是基于 Tauri 的桌面工具，用于在远程设备上运行脚本和命令。只要目标设备支持 SSH、串口等通讯方式中的任意一种，即可使用本工具。它提供本地工作区界面、xterm 控制台、运行状态与历史记录，React 前端通过统一的运行接口调用 Rust 后端。
 
 ## 当前进度
 
@@ -28,8 +28,8 @@ Remote Runner 是基于 Tauri 的桌面工具，用于在嵌入式 Linux 设备�
 - Node.js 和 npm。
 - 包含 Cargo 的 Rust 工具链。
 - 当前操作系统所需的 Tauri 桌面开发依赖；Windows 需要 WebView2 和 C++ 构建工具。
-- 使用 SSH 时，需要可连接的 Linux 设备及有效的认证信息。
-- 使用串口时，需要串口适配器或设备，且远端控制台已登录 Linux Shell。应用不自动执行串口登录或输入密码。
+- 使用 SSH 时，需要可通过网络连接且开启 SSH 服务的目标设备（不限设备形态）及有效的认证信息。
+- 使用串口时，需要串口适配器或设备，且远端控制台已登录 Shell。应用不自动执行串口登录或输入密码。
 - 使用 WSL 时，桌面客户端需运行于 Windows，发行版内需有 Python 3.8+（`python3`）；Shell 脚本还需 `bash`。无需在发行版中安装常驻服务。
 
 ## 本地运行
