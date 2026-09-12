@@ -27,7 +27,7 @@ tokio = { version = "1", features = ["test-util"] }
 
 [package]
 name = "remote-runner"
-version = "0.1.0"
+version = "0.2.0"
 description = "Embedded Linux Remote Script Runner"
 edition = "2021"
 build = "build.rs"
