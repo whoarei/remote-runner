@@ -118,18 +118,6 @@ export default function App() {
             onReset={() => setLayout({ sideSplit: DEFAULT_LAYOUT.sideSplit })}
           />
         )}
-        {layout.historyVisible && (
-          <div className="side-section" style={
-            layout.historyCollapsed ? { flex: "0 0 auto" }
-              : bothExpanded ? { flexGrow: 1 - layout.sideSplit, flexBasis: 0 }
-              : undefined
-          }>
-            <HistoryPanel
-              collapsed={layout.historyCollapsed}
-              onToggleCollapse={() => setLayout({ historyCollapsed: !layout.historyCollapsed })}
-            />
-          </div>
-        )}
         {layout.commandsVisible && (
           <div className="side-section commands-section" style={
             layout.commandsCollapsed ? { flex: "0 0 auto" }
@@ -139,6 +127,18 @@ export default function App() {
             <CommandsPanel
               collapsed={layout.commandsCollapsed}
               onToggleCollapse={() => setLayout({ commandsCollapsed: !layout.commandsCollapsed })}
+            />
+          </div>
+        )}
+        {layout.historyVisible && (
+          <div className="side-section" style={
+            layout.historyCollapsed ? { flex: "0 0 auto" }
+              : bothExpanded ? { flexGrow: 1 - layout.sideSplit, flexBasis: 0 }
+              : undefined
+          }>
+            <HistoryPanel
+              collapsed={layout.historyCollapsed}
+              onToggleCollapse={() => setLayout({ historyCollapsed: !layout.historyCollapsed })}
             />
           </div>
         )}
