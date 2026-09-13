@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 
 export type MenuEntry =
   | { label: string; danger?: boolean; disabled?: boolean; onSelect: () => void }
@@ -10,12 +10,9 @@ export interface MenuState {
   entries: MenuEntry[];
 }
 
-/** 依据点击位置计算菜单坐标，避免超出窗口右/下边缘 */
-export function contextMenuPosition(clientX: number, clientY: number, entryCount: number) {
-  return {
-    x: Math.max(0, Math.min(clientX, window.innerWidth - 200)),
-    y: Math.max(0, Math.min(clientY, window.innerHeight - entryCount * 30 - 16)),
-  };
+/** 保存弹出锚点；实际边界在菜单渲染后测量，条目数参数兼容现有调用。 */
+export function contextMenuPosition(clientX: number, clientY: number, _entryCount: number) {
+  return { x: clientX, y: clientY };
 }
 
 export function ContextMenu({ menu, disabled, onClose }: {
@@ -25,6 +22,25 @@ export function ContextMenu({ menu, disabled, onClose }: {
   onClose: () => void;
 }) {
   const container = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const element = container.current;
+    if (!menu || !element) return;
+    const reposition = () => {
+      const { width, height } = element.getBoundingClientRect();
+      const margin = 8;
+      element.style.left = `${Math.max(margin, Math.min(menu.x, window.innerWidth - width - margin))}px`;
+      element.style.top = `${Math.max(margin, Math.min(menu.y, window.innerHeight - height - margin))}px`;
+    };
+    // 首次绘制前定位，并跟随窗口、字体及换行造成的尺寸变化。
+    reposition();
+    const observer = new ResizeObserver(reposition);
+    observer.observe(element);
+    window.addEventListener("resize", reposition);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", reposition);
+    };
+  }, [menu]);
   useEffect(() => {
     if (!menu) return;
     const onPointerDown = (event: PointerEvent) => {

@@ -442,8 +442,21 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
   position: fixed;
   top: 0;
   left: 0;
-  min-width: 160px;
+  width: max-content;
+  min-width: min(160px, calc(100vw - 16px));
+  max-width: min(420px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   z-index: 60;
+}
+
+.context-menu > * { flex-shrink: 0; }
+
+.context-menu .menu-label {
+  min-width: 0;
+  max-width: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .menu-item-danger .menu-label {
