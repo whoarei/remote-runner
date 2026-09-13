@@ -127,6 +127,7 @@ async fn run_case(behavior: Behavior, timeout: u64) -> (RunStatus, Vec<u8>) {
         transport: Default::default(),
         serial: None,
         wsl: None,
+        local: None,
         id: "test".into(),
         name: "test".into(),
         host: "127.0.0.1".into(),

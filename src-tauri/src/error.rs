@@ -14,6 +14,9 @@ pub enum RunnerError {
     #[error("WSL error: {0}")]
     Wsl(String),
 
+    #[error("local shell error: {0}")]
+    Local(String),
+
     #[error("authentication failed for user {0}")]
     AuthFailed(String),
 

@@ -2,6 +2,7 @@ pub mod commands;
 pub mod device;
 pub mod error;
 pub mod events;
+pub mod local;
 pub mod process;
 pub mod runner;
 pub mod serial;
@@ -82,6 +83,7 @@ pub fn run() {
             commands::test_device,
             commands::list_serial_ports,
             commands::list_wsl_distributions,
+            commands::list_local_shells,
             commands::list_workspace_dir,
             commands::read_workspace_file,
             commands::write_workspace_file,

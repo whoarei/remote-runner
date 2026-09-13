@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { api, DeviceProfile } from "../api";
+import { api, DeviceProfile, LocalShellInfo } from "../api";
 import { useAppStore } from "../store";
 
 /** 新设备模板 */
@@ -10,6 +10,7 @@ export const emptyDevice = (): DeviceProfile => ({
   transport: "ssh",
   serial: { port: "", baud_rate: 115200 },
   wsl: { distribution: "", user: "" },
+  local: { shell: "", path: null },
   host: "",
   port: 22,
   username: "root",
@@ -19,7 +20,7 @@ export const emptyDevice = (): DeviceProfile => ({
 
 /** 设备下拉列表中的展示文案 */
 export const deviceLabel = (d: DeviceProfile) =>
-  `${d.name} (${d.transport === "wsl" ? `WSL · ${d.wsl?.distribution}` : d.transport === "serial" ? `${d.serial?.port} · ${d.serial?.baud_rate}` : `${d.username}@${d.host}`})`;
+  `${d.name} (${d.transport === "wsl" ? `WSL · ${d.wsl?.distribution}` : d.transport === "serial" ? `${d.serial?.port} · ${d.serial?.baud_rate}` : d.transport === "local" ? `Local · ${d.local?.shell}` : `${d.username}@${d.host}`})`;
 
 export function DeviceDialog() {
   const { t } = useTranslation();
@@ -29,6 +30,7 @@ export function DeviceDialog() {
   const [testResult, setTestResult] = useState<string | null>(null);
   const [ports, setPorts] = useState<string[]>([]);
   const [distributions, setDistributions] = useState<string[]>([]);
+  const [shells, setShells] = useState<LocalShellInfo[]>([]);
   const [testing, setTesting] = useState(false);
   const wasOpen = useRef(false);
 
@@ -42,13 +44,19 @@ export function DeviceDialog() {
     catch (e) { setTestResult(t("device.enumDistrosFailed", { message: String(e) })); }
   };
 
-  // 对话框打开时重置测试结果，并按连接方式预取端口 / 发行版列表
+  const refreshShells = async () => {
+    try { setShells(await api.listLocalShells()); }
+    catch (e) { setTestResult(t("device.enumShellsFailed", { message: String(e) })); }
+  };
+
+  // 对话框打开时重置测试结果，并按连接方式预取端口 / 发行版 / 本机 shell 列表
   useEffect(() => {
     if (editing && !wasOpen.current) {
       setTestResult(null);
       setTesting(false);
       if (editing.transport === "serial") void refreshPorts();
       if (editing.transport === "wsl") void refreshDistributions();
+      if (editing.transport === "local") void refreshShells();
     }
     wasOpen.current = !!editing;
   }, [editing]);
@@ -98,14 +106,16 @@ export function DeviceDialog() {
           {t("device.transport")}
           <select value={editing.transport} disabled={testing} onChange={(e) => {
             const transport = e.target.value as DeviceProfile["transport"];
-            update({ transport, serial: editing.serial ?? { port: "", baud_rate: 115200 }, wsl: editing.wsl ?? { distribution: "", user: "" } });
+            update({ transport, serial: editing.serial ?? { port: "", baud_rate: 115200 }, wsl: editing.wsl ?? { distribution: "", user: "" }, local: editing.local ?? { shell: "", path: null } });
             setTestResult(null);
             if (transport === "serial") void refreshPorts();
             if (transport === "wsl") void refreshDistributions();
+            if (transport === "local") void refreshShells();
           }}>
             <option value="ssh">SSH</option>
             <option value="serial">{t("device.serial")}</option>
             <option value="wsl">{t("device.wsl")}</option>
+            <option value="local">{t("device.local")}</option>
           </select>
         </label>
         {editing.transport === "wsl" ? <>
@@ -122,6 +132,23 @@ export function DeviceDialog() {
               onChange={(e) => update({ wsl: { distribution: editing.wsl?.distribution ?? "", user: e.target.value } })} />
           </label>
           <p>{t("device.wslDescription")}</p>
+        </> : editing.transport === "local" ? <>
+          <label>
+            {t("device.localShell")}
+            <input list="local-shell-options" value={editing.local?.shell ?? ""}
+              placeholder={t("device.localShellPlaceholder")}
+              onChange={(e) => update({ local: { shell: e.target.value, path: null } })} />
+            <datalist id="local-shell-options">
+              {shells.map((shell) => <option key={shell.id} value={shell.id}>{shell.label} · {shell.path}</option>)}
+            </datalist>
+            <button type="button" onClick={refreshShells}>{t("device.refreshShells")}</button>
+          </label>
+          <label>
+            {t("device.localShellPath")}
+            <input value={editing.local?.path ?? ""} placeholder={t("device.localShellPathPlaceholder")}
+              onChange={(e) => update({ local: { shell: editing.local?.shell ?? "", path: e.target.value || null } })} />
+          </label>
+          <p>{t("device.localDescription")}</p>
         </> : editing.transport === "serial" ? <>
           <label>
             {t("device.serialPort")}
@@ -200,6 +227,7 @@ export function DeviceDialog() {
           </label>
         )}
         </>}
+        {editing.transport !== "local" && (
         <label>
           {editing.transport === "wsl" ? t("device.workspaceRootWsl") : t("device.workspaceRootRemote")}
           <input
@@ -207,6 +235,7 @@ export function DeviceDialog() {
             onChange={(e) => update({ workspace_root: e.target.value })}
           />
         </label>
+        )}
         <div className="modal-actions">
           <button disabled={testing} onClick={() => test(editing)}>{t("device.testConnection")}</button>
           {editing.id && (
@@ -216,7 +245,7 @@ export function DeviceDialog() {
           )}
           <button
             className="primary"
-            disabled={testing || !editing.name || (editing.transport === "wsl" ? !editing.wsl?.distribution.trim() : editing.transport === "serial" ? !editing.serial?.port || !editing.serial?.baud_rate : !editing.host)}
+            disabled={testing || !editing.name || (editing.transport === "wsl" ? !editing.wsl?.distribution.trim() : editing.transport === "serial" ? !editing.serial?.port || !editing.serial?.baud_rate : editing.transport === "local" ? !editing.local?.shell : !editing.host)}
             onClick={() => save(editing)}
           >
             {t("device.save")}

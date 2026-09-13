@@ -43,6 +43,9 @@ pub async fn test_device(
     device: DeviceProfile,
 ) -> Result<String> {
     device.validate()?;
+    if device.transport == crate::device::TransportKind::Local {
+        return crate::local::test_device(device.local.as_ref().unwrap()).await;
+    }
     if device.transport == crate::device::TransportKind::Wsl {
         return crate::wsl::test_device(device.wsl.as_ref().unwrap()).await;
     }
@@ -84,6 +87,11 @@ pub fn list_serial_ports() -> Result<Vec<String>> {
 #[tauri::command]
 pub async fn list_wsl_distributions() -> Result<Vec<String>> {
     crate::wsl::list_distributions().await
+}
+
+#[tauri::command]
+pub fn list_local_shells() -> Vec<crate::local::shells::ShellInfo> {
+    crate::local::shells::detect()
 }
 
 type WorkspaceResult<T> = std::result::Result<T, crate::workspace::FileError>;

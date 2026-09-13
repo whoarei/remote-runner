@@ -160,6 +160,7 @@ export function AboutDialog({ dialogRef, autoCheckNonce = 0 }: { dialogRef: RefO
         <li>SSH</li>
         <li>{t("about.serialShell")}</li>
         <li>WSL</li>
+        <li>{t("about.localShell")}</li>
       </ul>
       <p className="about-features">{t("about.features")}</p>
       {isTauri() && <UpdateSection autoCheckNonce={autoCheckNonce} />}

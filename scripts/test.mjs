@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const directory = await mkdtemp(join(tmpdir(), "remote-runner-tests-"));
-  const entries = ["store", "layout", "review", "workspace", "appUpdate", "release", "terminal", "historyExport", "presetCommands"];
+const entries = ["store", "layout", "review", "workspace", "appUpdate", "release", "terminal", "historyExport", "presetCommands", "device"];
 try {
   await build({
     entryPoints: entries.map((name) => `tests/${name}.test.ts`),

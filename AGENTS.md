@@ -9,6 +9,7 @@ The supported transports are:
 - **SSH**: SFTP workspace upload, PTY or pipe execution, interactive input, resize, stop escalation, and run history.
 - **Serial Shell V1**: `tokio-serial`, 8N1, shell marker framing, UTF-8 text workspace upload, stdin, Ctrl+C, and timeout handling. It assumes the device is already logged into a Linux shell; it does not automate login credentials.
 - **WSL**: Windows `wsl.exe` directly starts a bundled Python helper in a selected local distribution, without SSH. Supports binary workspace snapshots, Linux PTY or separate pipes, stdin, resize, process-group stop escalation, and history. Requires Python 3.8+ inside the distribution.
+- **Local Shell**: runs workloads directly on this machine with a detected shell (Windows: pwsh, powershell, cmd, msys2, Git Bash; macOS/Linux: bash, zsh, sh), no SSH or helper. The workspace runs **in place** (no upload/copy; artifacts land in the workspace). PTY via `portable-pty` (ConPTY/openpty) or separate pipes, stdin, resize, and INT → TERM → KILL stop escalation (Windows pipe mode has no graceful interrupt; kills use `taskkill /T /F`). ConPTY startup requires the backend reader thread to answer the `\x1b[6n` DSR query itself. See `docs/00023_20260913_local-shell.md` and `docs/00024_20260913_local-shell-implementation.md`.
 
 There is no hardware available in the development environment. Serial behavior is verified with Tokio duplex streams and a local POSIX/Git Bash shell.
 
@@ -22,6 +23,7 @@ There is no hardware available in the development environment. Serial behavior i
 - `src-tauri/src/ssh/`: SSH client, SFTP synchronization, and SSH process sessions.
 - `src-tauri/src/serial/`: serial port leasing, shell framing, session control, and text workspace upload.
 - `src-tauri/src/wsl/`: direct WSL process bridge, bounded workspace snapshots, Python helper, and opt-in WSL integration tests.
+- `src-tauri/src/local/`: local shell registry and detection, portable-pty/pipe session layer with thread-based IO, per-flavor argv construction (posix/powershell/cmd), stop escalation, and real local-process integration tests (shells auto-skip when missing).
 - `src-tauri/src/process.rs`: transport-independent console and session control types.
 - `src-tauri/src/tray.rs`: system tray icon/menu, close-to-tray semantics, and autostart (`tauri-plugin-autostart`, `--minimized` silent launch; design: `docs/00018_20260912_tray-autostart.md`). Single instance is enforced via `tauri-plugin-single-instance` (registered first in `lib.rs`; a manual relaunch focuses the existing window, `--minimized` relaunches exit silently; design: `docs/00019_20260912_single-instance.md`).
 - `src-tauri/src/update.rs`: app self-update — update check against the GitHub `latest.json` manifest, Tauri updater install with minisign verification, installed-vs-portable detection with manual-download fallback (design: `docs/00011_20260912_app-upgrade.md`).

@@ -548,6 +548,9 @@ impl RunManager {
         if device.transport == TransportKind::Serial {
             return self.execute_serial(run_id, req, device, stop_rx).await;
         }
+        if device.transport == TransportKind::Local {
+            return self.execute_local(run_id, req, device, stop_rx).await;
+        }
         // 1. 建立 SSH 连接
         let conn = tokio::select! {
             biased;
@@ -817,6 +820,36 @@ impl RunManager {
             req,
             &remote,
             files,
+            &mut controls,
+            |event| match event {
+                Event::State(state) => self.set_state(run_id, state),
+                Event::Output { stream, data } => {
+                    self.emit_output(run_id, stream, &data);
+                }
+            },
+        );
+        await_transport(execution, control, stop_rx, req.timeout_secs).await
+    }
+
+    /// 本机 shell：原地运行，无工作区上传；停止/超时升级由 local 执行循环实现
+    async fn execute_local(
+        &self,
+        run_id: &str,
+        req: &RunRequest,
+        device: &DeviceProfile,
+        mut stop_rx: mpsc::UnboundedReceiver<StopKind>,
+    ) -> Result<RunOutcome> {
+        use crate::local::{self, Event};
+        if stop_rx.try_recv().is_ok() {
+            return Ok(RunOutcome::Canceled { code: None });
+        }
+        let (control, mut controls) = mpsc::unbounded_channel();
+        if let Some(handle) = self.handles.lock().get_mut(run_id) {
+            handle.control = control.clone();
+        }
+        let execution = local::execute(
+            device.local.as_ref().unwrap(),
+            req,
             &mut controls,
             |event| match event {
                 Event::State(state) => self.set_state(run_id, state),

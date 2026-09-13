@@ -7,14 +7,22 @@ export type AuthMethod =
 export interface DeviceProfile {
   id: string;
   name: string;
-  transport: "ssh" | "serial" | "wsl";
+  transport: "ssh" | "serial" | "wsl" | "local";
   serial?: { port: string; baud_rate: number } | null;
   wsl?: { distribution: string; user: string } | null;
+  local?: { shell: string; path?: string | null } | null;
   host: string;
   port: number;
   username: string;
   auth: AuthMethod;
   workspace_root: string;
+}
+
+/** 后端探测到的可用本机 shell */
+export interface LocalShellInfo {
+  id: string;
+  label: string;
+  path: string;
 }
 
 export type ScriptKind = "python" | "shell" | "command";
@@ -117,6 +125,7 @@ export const api = {
     invoke<string>("test_device", { device }),
   listSerialPorts: () => invoke<string[]>("list_serial_ports"),
   listWslDistributions: () => invoke<string[]>("list_wsl_distributions"),
+  listLocalShells: () => invoke<LocalShellInfo[]>("list_local_shells"),
 
   listWorkspaceDir: (dir: string, subdir: string) =>
     invoke<WorkspaceEntry[]>("list_workspace_dir", { dir, subdir }),

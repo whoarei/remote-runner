@@ -11,6 +11,7 @@ Remote Runner 是基于 Tauri 的桌面工具，用于在远程设备上运行�
 | SFTP 工作区上传 | 已实现 |
 | 串口 Shell 第一版 | 已实现 |
 | WSL 本机发行版直接执行（无需 SSH） | 已实现 |
+| 本机 Shell 直接执行（pwsh / cmd / msys2 等） | 已实现 |
 | 串口设备代理协议 | 待实现 |
 | Node.js、Python 虚拟环境、托管运行时 | 待实现 |
 | 运行产物下载、编辑器保存写回 | 待实现 |
@@ -22,6 +23,7 @@ Remote Runner 是基于 Tauri 的桌面工具，用于在远程设备上运行�
 - 串口支持 Windows COM 和 Unix tty 端口，可配置波特率，使用 8N1、无流控设置；通过每次命令独有的随机标记判断执行完成，支持文本工作区上传、交互输入、Ctrl+C 停止和超时报告。
 - 输出保留原始字节：Rust 后端将数据编码为 Base64 发送，前端解码后由 xterm.js 渲染。
 - WSL 通过 `wsl.exe` 直接启动本机发行版内的进程，支持 PTY、pipe、工作区上传、交互输入、缩放、停止与超时，无需 SSH 服务或认证。
+- 本机 Shell 直接在本机以指定 shell 运行（Windows：pwsh、powershell、cmd、msys2、Git Bash；macOS/Linux：bash、zsh、sh），工作区原地执行，支持 PTY、pipe、交互输入、缩放、停止与超时。
 
 ## 环境要求
 
@@ -45,7 +47,7 @@ npm run tauri dev
 
 ## 使用设备
 
-1. 在设备栏中添加 SSH、串口或 WSL 设备。
+1. 在设备栏中添加 SSH、串口、WSL 或本机 Shell 设备。
 2. 选择本地工作区，并选择 Python/Shell 入口脚本或切换到命令模式。
 3. 点击运行按钮（界面中的 **Run**），在控制台查看输出并输入交互内容。
 
@@ -59,6 +61,8 @@ npm run tauri dev
 
 WSL 设备选择本机已安装的发行版，Linux 用户留空表示使用该发行版的默认用户。点击“测试连接”检查发行版与 Python 环境。每次运行将本地工作区复制到 WSL 工作区根目录下的独立运行目录；不选工作区的命令在 Linux 用户主目录执行。支持二进制文件，单文件最多 16 MiB、总计 64 MiB、最多 4096 个文件或目录；拒绝链接、重定向路径和特殊文件。生成的文件保留在 WSL 运行目录内，不自动下载或写回本地。详见 [WSL 直接连接](docs/00007_20260912_wsl.md)。
 
+本机 Shell 设备选择自动探测到的 shell（可填自定义可执行路径覆盖）。工作区**原地运行**：不上传、不复制，运行产物直接写入工作区目录，因此运行期间请避免同时编辑工作区文件。Python/Shell 入口直接由解释器执行（不经 shell 拼接）；命令类型交给所选 shell 解释（pwsh/powershell 为 `-Command`，cmd 为 `/C`，posix shell 为 `-c`，msys2/Git Bash 附带 `-l` 获得完整 PATH）。cmd 命令内嵌双引号时行为可能不一致；cmd 设备运行 Shell 类型入口需为 `.bat`/`.cmd`，PowerShell 设备需为 `.ps1`。停止升级为 INT（Ctrl+C）→ TERM → KILL；Windows 上 pipe 模式无温和中断语义，停止直接终止进程树（`taskkill /T /F`）。详见 [本机 Shell 直连](docs/00023_20260913_local-shell.md)。
+
 ## 测试与验证
 
 ```powershell
@@ -70,7 +74,7 @@ cargo fmt --all -- --check
 cargo test --offline --all-targets
 ```
 
-当前没有可用的串口硬件，串口测试使用模拟双向数据流和本机 Shell。SSH 集成测试使用本地模拟服务器，无需连接用户的 SSH 设备。
+当前没有可用的串口硬件，串口测试使用模拟双向数据流和本机 Shell。SSH 集成测试使用本地模拟服务器，无需连接用户的 SSH 设备。本机 Shell 测试直接在本机可用 shell（至少 cmd / sh）上运行真实进程，shell 缺失时自动跳过。
 
 普通 Windows 测试不依赖 WSL。已安装发行版时，可额外运行直接 WSL 集成测试（从 `src-tauri` 目录执行）：
 
@@ -191,3 +195,5 @@ Get-ChildItem ./src-tauri/target/release/bundle/nsis/*-setup.exe | Get-FileHash 
 - [实施进度](docs/00002_20260908_implementation-progress.md)
 - [代码审查记录](docs/00003_20260908_code-review.md)
 - [串口 Shell 第一版实现](docs/00004_20260908_serial-shell.md)
+- [本机 Shell 直连设计](docs/00023_20260913_local-shell.md)
+- [本机 Shell 直连实现细节](docs/00024_20260913_local-shell-implementation.md)

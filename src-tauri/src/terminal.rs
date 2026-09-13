@@ -147,6 +147,17 @@ impl TerminalManager {
                     .await
                 }
                 TransportKind::Serial => unreachable!(),
+                TransportKind::Local => {
+                    crate::local::terminal::execute(
+                        device.local.as_ref().unwrap(),
+                        cols,
+                        rows,
+                        &mut controls,
+                        &mut cancellation,
+                        emit,
+                    )
+                    .await
+                }
             };
             if let Some(handle) = manager.handles.lock().get_mut(&id) {
                 // Overflow is recorded before cancellation; never replace it with a clean close.

@@ -9,6 +9,7 @@ pub enum TransportKind {
     Ssh,
     Serial,
     Wsl,
+    Local,
 }
 
 impl TransportKind {
@@ -68,6 +69,57 @@ mod tests {
         serial.serial.as_mut().unwrap().baud_rate = 0;
         assert!(serial.validate().is_err());
     }
+
+    #[test]
+    fn local_profiles_skip_workspace_root_and_validate_shell() {
+        let local: DeviceProfile = serde_json::from_value(serde_json::json!({
+            "id": "l1", "name": "本机 pwsh", "transport": "local",
+            "local": { "shell": "pwsh" }, "workspace_root": "not-a-linux-path"
+        }))
+        .unwrap();
+        assert_eq!(local.transport, TransportKind::Local);
+        local.validate().unwrap();
+        // 缺 local 配置 / 非法 shell id / 非法路径覆盖均拒绝
+        let missing: DeviceProfile = serde_json::from_value(serde_json::json!({
+            "id": "l2", "name": "x", "transport": "local"
+        }))
+        .unwrap();
+        assert!(missing.validate().is_err());
+        for bad in ["", "pw sh", "pwsh;", " pwsh"] {
+            let mut cfg = local.clone();
+            cfg.local = Some(LocalConfig {
+                shell: bad.into(),
+                path: None,
+            });
+            assert!(cfg.validate().is_err(), "{bad:?}");
+        }
+        let mut cfg = local.clone();
+        cfg.local = Some(LocalConfig {
+            shell: "pwsh".into(),
+            path: Some(
+                if cfg!(windows) {
+                    "C:/tools/pwsh.exe"
+                } else {
+                    "/opt/tools/pwsh"
+                }
+                .into(),
+            ),
+        });
+        cfg.validate().unwrap();
+        cfg.local = Some(LocalConfig {
+            shell: "pwsh".into(),
+            path: Some("relative/pwsh".into()),
+        });
+        assert!(cfg.validate().is_err());
+        cfg.local = Some(LocalConfig {
+            shell: "pwsh".into(),
+            path: Some("bad\0path".into()),
+        });
+        assert!(cfg.validate().is_err());
+        // local 能力：pipe 与 resize 均支持
+        let caps = TransportKind::Local.capabilities();
+        assert!(caps.pipe && caps.resize);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +127,42 @@ pub struct SerialConfig {
     pub port: String,
     #[serde(default = "default_baud_rate")]
     pub baud_rate: u32,
+}
+
+/// 本机 shell 直连配置。shell 为后端注册表中的 id（如 "pwsh"、"msys2"），
+/// path 留空时按注册表候选位置探测可执行文件。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalConfig {
+    pub shell: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+impl LocalConfig {
+    pub fn validate(&self) -> Result<()> {
+        let invalid = |text: &str| RunnerError::InvalidInput(text.into());
+        let shell = self.shell.as_str();
+        if shell != shell.trim()
+            || shell.is_empty()
+            || shell.len() > 64
+            || !shell
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(invalid("invalid local shell id"));
+        }
+        if let Some(path) = &self.path {
+            if *path != path.trim()
+                || path.is_empty()
+                || path.len() > 1024
+                || path.contains(['\0', '\r', '\n'])
+                || !Path::new(path).is_absolute()
+            {
+                return Err(invalid("invalid local shell path"));
+            }
+        }
+        Ok(())
+    }
 }
 
 fn default_baud_rate() -> u32 {
@@ -107,6 +195,8 @@ pub struct DeviceProfile {
     pub serial: Option<SerialConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wsl: Option<WslConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local: Option<LocalConfig>,
     #[serde(default)]
     pub host: String,
     #[serde(default = "default_port")]
@@ -134,18 +224,25 @@ impl DeviceProfile {
         if self.name.trim().is_empty() {
             return Err(invalid("device name is required"));
         }
-        if !self.workspace_root.starts_with('/')
-            || self.workspace_root.contains(['\0', '\r', '\n'])
-            || self
-                .workspace_root
-                .split('/')
-                .any(|p| p == ".." || p == ".")
+        // 本机设备原地运行，不使用远程工作区根目录
+        if self.transport != TransportKind::Local
+            && (!self.workspace_root.starts_with('/')
+                || self.workspace_root.contains(['\0', '\r', '\n'])
+                || self
+                    .workspace_root
+                    .split('/')
+                    .any(|p| p == ".." || p == "."))
         {
             return Err(invalid(
                 "workspace root must be an absolute Linux path without dot components",
             ));
         }
         match self.transport {
+            TransportKind::Local => self
+                .local
+                .as_ref()
+                .ok_or_else(|| invalid("local configuration is required"))?
+                .validate()?,
             TransportKind::Wsl => self
                 .wsl
                 .as_ref()
