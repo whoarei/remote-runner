@@ -4,6 +4,7 @@ import { useAppStore } from "../store";
 import { useTerminalStore } from "../terminalStore";
 import { errorMessage } from "../api";
 import { ContextMenu, contextMenuPosition, type MenuEntry, type MenuState } from "./ContextMenu";
+import { deviceLabel } from "./DeviceDialog";
 import { RunToolbar } from "./RunToolbar";
 import { RunConsole } from "./RunConsole";
 import { TerminalPage } from "./TerminalPage";
@@ -36,7 +37,7 @@ export function ConsolePanel({ visible, collapsed, onToggleCollapse }: {
     setError("");
     const entries: MenuEntry[] = devices.length
       ? devices.map((device) => ({
-        label: `${device.name} · ${device.transport.toUpperCase()}${device.transport === "serial" ? t("console.serialNoTerminal") : ""}`,
+        label: `${deviceLabel(device)}${device.transport === "serial" ? t("console.serialNoTerminal") : ""}`,
         disabled: device.transport === "serial",
         onSelect: () => open(device.id),
       }))
