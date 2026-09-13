@@ -151,6 +151,15 @@ export function CommandsPanel({ collapsed, onToggleCollapse }: { collapsed: bool
     setMenu({ ...contextMenuPosition(event.clientX, event.clientY, entries.length), entries });
   };
 
+  // 标题栏右键：添加预置命令（与 ＋ 按钮一致）
+  const openTitleMenu = (event: MouseEvent) => {
+    event.preventDefault();
+    const entries = [
+      { label: t("commands.add"), onSelect: () => setDraft(emptyDraft()) },
+    ];
+    setMenu({ ...contextMenuPosition(event.clientX, event.clientY, entries.length), entries });
+  };
+
   const saveDraft = () => {
     if (!draft) return;
     const name = draft.name.trim();
@@ -180,7 +189,8 @@ export function CommandsPanel({ collapsed, onToggleCollapse }: { collapsed: bool
 
   return (
     <div className="commands-panel">
-      <PanelTitle title={t("commands.title")} collapsed={collapsed} onToggle={onToggleCollapse}>
+      <PanelTitle title={t("commands.title")} collapsed={collapsed} onToggle={onToggleCollapse}
+        onContextMenu={openTitleMenu}>
         <button type="button" aria-label={t("commands.add")} title={t("commands.add")}
           onClick={() => setDraft(emptyDraft())}>＋</button>
       </PanelTitle>
