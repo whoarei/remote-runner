@@ -10,7 +10,7 @@ import i18n from "../src/i18n";
 test.before(async () => { await i18n.changeLanguage("zh"); });
 import { EditorTab, inferLanguage } from "../src/editorDocument";
 import { DEFAULT_RUN_DRAFT } from "../src/runState";
-import { WorkspacePanel } from "../src/components/WorkspacePanel";
+import { WorkspacePanel, workspacePickerMenuEntries, workspaceSwitchMenuEntries } from "../src/components/WorkspacePanel";
 import {
   collectScripts, dropSubtree, isWithin, joinPath, nameOf, parentOf, rekeySubtree, WORKSPACE_ROOT,
 } from "../src/workspaceTree";
@@ -93,6 +93,28 @@ test("workspace panel renders the tree with expansion state and an empty hint", 
   useAppStore.setState({ workspaceDir: null, workspaceTree: {} });
   assert.match(renderToStaticMarkup(createElement(WorkspacePanel, { collapsed: false, onToggleCollapse: () => {} })),
     /尚未选择工作区目录/);
+});
+
+test("empty workspace context menu offers open and recent workspaces", () => {
+  const withRecent = workspacePickerMenuEntries((key) => i18n.t(key), ["/a", "/b"]);
+  assert.deepEqual(withRecent.map((entry) => entry === "separator" ? "|" : entry.label),
+    ["打开工作区…", "|", "/a", "/b"]);
+
+  const empty = workspacePickerMenuEntries((key) => i18n.t(key), []);
+  assert.deepEqual(empty.map((entry) => entry === "separator" ? "|" : entry.label),
+    ["打开工作区…", "|", "（无最近记录）"]);
+  const placeholder = empty[2];
+  assert.ok(placeholder !== "separator" && placeholder.disabled);
+});
+
+test("open workspace blank-area menu adds close, open and recent entries for switching", () => {
+  const entries = workspaceSwitchMenuEntries((key) => i18n.t(key), ["/a", "/b"]);
+  assert.deepEqual(entries.map((entry) => entry === "separator" ? "|" : entry.label),
+    ["打开工作区…", "关闭工作区", "|", "/a", "/b"]);
+
+  const empty = workspaceSwitchMenuEntries((key) => i18n.t(key), []);
+  assert.deepEqual(empty.map((entry) => entry === "separator" ? "|" : entry.label),
+    ["打开工作区…", "关闭工作区", "|", "（无最近记录）"]);
 });
 
 test("opening a workspace loads the root and expanding a directory loads it once", async (t) => {

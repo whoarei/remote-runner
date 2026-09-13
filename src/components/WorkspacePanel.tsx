@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
 import type { WorkspaceEntry } from "../api";
 import { useAppStore } from "../store";
+import { openWorkspace } from "../workspacePicker";
 import { joinPath, WORKSPACE_ROOT, WorkspacePath, WorkspaceTree } from "../workspaceTree";
 import { ConfirmDialog, ConfirmRequest } from "./ConfirmDialog";
 import { ContextMenu, contextMenuPosition, MenuEntry, MenuState } from "./ContextMenu";
@@ -17,6 +18,31 @@ type Editing =
 interface PendingDelete {
   path: WorkspacePath;
   isDir: boolean;
+}
+
+/** 最近的工作区菜单项（扁平列出，与「文件」菜单同源）；无记录时为置灰占位 */
+function recentWorkspaceEntries(t: (key: string) => string, recentWorkspaces: string[]): MenuEntry[] {
+  if (recentWorkspaces.length === 0) return [{ label: t("menu.noRecent"), disabled: true, onSelect: () => {} }];
+  return recentWorkspaces.map((dir) => ({ label: dir, onSelect: () => void openWorkspace(dir) }));
+}
+
+/** 未打开工作区时的右键菜单：打开工作区 + 最近的工作区 */
+export function workspacePickerMenuEntries(t: (key: string) => string, recentWorkspaces: string[]): MenuEntry[] {
+  return [
+    { label: t("menu.openWorkspace"), onSelect: () => void openWorkspace() },
+    "separator",
+    ...recentWorkspaceEntries(t, recentWorkspaces),
+  ];
+}
+
+/** 已打开工作区时空白区右键的工作区管理项：打开 / 关闭 / 最近（用于切换） */
+export function workspaceSwitchMenuEntries(t: (key: string) => string, recentWorkspaces: string[]): MenuEntry[] {
+  return [
+    { label: t("menu.openWorkspace"), onSelect: () => void openWorkspace() },
+    { label: t("menu.closeWorkspace"), onSelect: () => void useAppStore.getState().setWorkspaceDir(null) },
+    "separator",
+    ...recentWorkspaceEntries(t, recentWorkspaces),
+  ];
 }
 
 interface TreeProps {
@@ -137,10 +163,12 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
     workspaceError,
     openFile,
     disabled,
+    recentWorkspaces,
   } = useAppStore(useShallow((s) => ({
     workspaceDir: s.workspaceDir, workspaceTree: s.workspaceTree, workspaceError: s.workspaceError,
     openFile: s.activeFile,
     disabled: s.saving || s.starting || s.guarding || s.workspaceMutating,
+    recentWorkspaces: s.recentWorkspaces,
   })));
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
@@ -160,8 +188,7 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
   const openMenu = (event: MouseEvent, dir: WorkspacePath, entry: WorkspaceEntry | null) => {
     event.preventDefault();
     event.stopPropagation();
-    if (!workspaceDir) return;
-    const path = entry ? joinPath(dir, entry.name) : dir;
+    if (!workspaceDir) return;    const path = entry ? joinPath(dir, entry.name) : dir;
     const entries: MenuEntry[] = [];
     if (!entry) entries.push({ label: t("workspace.refresh"), onSelect: () => void useAppStore.getState().loadWorkspaceDir(dir) });
     // 新建入口只出现在目录与空白区；文件条目上只有打开/重命名/删除
@@ -169,6 +196,8 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
       entries.push({ label: t("workspace.newFile"), onSelect: () => void startCreate(path, "create-file") });
       entries.push({ label: t("workspace.newDir"), onSelect: () => void startCreate(path, "create-dir") });
     }
+    // 空白区附带工作区管理项：打开 / 关闭 / 最近（切换工作区与打开走同一条确认路径）
+    if (!entry) entries.push("separator", ...workspaceSwitchMenuEntries(t, recentWorkspaces));
     if (entry) {
       entries.push("separator");
       if (!entry.is_dir) entries.push({ label: t("workspace.open"), onSelect: () => void useAppStore.getState().openWorkspaceFile(path) });
@@ -179,6 +208,14 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
       ...contextMenuPosition(event.clientX, event.clientY, entries.length),
       entries,
     });
+  };
+
+  // 未打开工作区时右键给出打开入口，与菜单栏「文件」一致
+  const openPickerMenu = (event: MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const entries = workspacePickerMenuEntries(t, recentWorkspaces);
+    setMenu({ ...contextMenuPosition(event.clientX, event.clientY, entries.length), entries });
   };
 
   const confirmRequest: ConfirmRequest | null = useMemo(() => pendingDelete ? {
@@ -199,7 +236,7 @@ export function WorkspacePanel({ collapsed, onToggleCollapse }: { collapsed: boo
   return (
     <div
       className="workspace-panel"
-      onContextMenu={collapsed ? undefined : (event) => openMenu(event, WORKSPACE_ROOT, null)}
+      onContextMenu={collapsed ? undefined : (event) => workspaceDir ? openMenu(event, WORKSPACE_ROOT, null) : openPickerMenu(event)}
     >
       <PanelTitle title={t("workspace.title")} collapsed={collapsed} onToggle={onToggleCollapse} />
       {!collapsed && (
