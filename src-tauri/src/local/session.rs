@@ -96,12 +96,12 @@ fn spawn_reader(
 
 /// ConPTY 以 WIN32_INPUT_MODE 创建，启动时输出 `\x1b[6n` 查询光标位置并等待回复；
 /// 没有真实终端应答时（如后台运行、前端尚未渲染）子进程会一直阻塞。
-/// 读取线程代答 `\x1b[{rows};{cols}R`。xterm.js 也会应答，重复回复无害。
+/// 读取线程代答启动阶段的光标查询。PTY 初始光标位于左上角，不能把
+/// 初始 PTY 尺寸当作光标位置，否则 shell 会把提示符放到第 N 行。
+/// xterm.js 也会应答，重复的 `1;1` 回复无害。
 #[derive(Clone)]
 struct DsrResponder {
     input_tx: std::sync::mpsc::Sender<Vec<u8>>,
-    rows: u16,
-    cols: u16,
     replied: bool,
 }
 
@@ -111,9 +111,7 @@ impl DsrResponder {
             return;
         }
         self.replied = true;
-        let _ = self
-            .input_tx
-            .send(format!("\x1b[{};{}R", self.rows, self.cols).into_bytes());
+        let _ = self.input_tx.send(b"\x1b[1;1R".to_vec());
     }
 }
 
@@ -208,8 +206,6 @@ impl Session {
         #[cfg(windows)]
         let dsr = DsrResponder {
             input_tx: input_tx.clone(),
-            rows: spec.rows as u16,
-            cols: spec.cols as u16,
             replied: false,
         };
         #[cfg(windows)]
@@ -415,15 +411,13 @@ mod tests {
         let (input_tx, input_rx) = std::sync::mpsc::channel();
         let mut responder = DsrResponder {
             input_tx,
-            rows: 24,
-            cols: 80,
             replied: false,
         };
 
         responder.reply();
         responder.reply();
 
-        assert_eq!(input_rx.recv().unwrap(), b"\x1b[24;80R");
+        assert_eq!(input_rx.recv().unwrap(), b"\x1b[1;1R");
         assert!(matches!(
             input_rx.try_recv(),
             Err(std::sync::mpsc::TryRecvError::Empty)

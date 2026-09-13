@@ -27,7 +27,7 @@
 
 `portable-pty` 以 `PSEUDOCONSOLE_WIN32_INPUT_MODE` 创建 ConPTY。该模式下 **ConPTY 启动时向输出写入 `\x1b[6n`（DSR 光标位置查询）并等待回复，未收到回复前子进程实际上不推进**——实测 `cmd /C echo` 与 `pwsh -Command echo` 均永久挂起，kill 后只能读到那 4 字节查询。
 
-解法：Windows 上 `session.rs` 的 PTY 读取线程扫描输出流（保留 3 字节跨块上下文），对首次 `\x1b[6n` 通过 stdin writer 通道代答 `\x1b[{rows};{cols}R`。代答仅启用在 ConPTY 且只发生一次，避免 Unix PTY 或应用后续主动查询光标位置时注入伪响应。实测代答后 cmd/pwsh 立即继续执行并正常退出。
+解法：Windows 上 `session.rs` 的 PTY 读取线程扫描输出流（保留 3 字节跨块上下文），对首次 `\x1b[6n` 通过 stdin writer 通道代答初始光标位置 `\x1b[1;1R`。这里必须回复光标位置，不能把初始 PTY 的行列尺寸（默认 `80×24`）当成光标坐标，否则前端稍后将终端调整到更高高度时，pwsh/msys2 的提示符会出现在中部。代答仅启用在 ConPTY 且只发生一次，避免 Unix PTY 或应用后续主动查询光标位置时注入伪响应。实测代答后 cmd/pwsh 立即继续执行并正常退出。
 
 ### cmd 的 CRT 引号转义破坏内嵌双引号
 
