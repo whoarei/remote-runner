@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
 import { api, inferKind, RunRequest, ScriptKind } from "../api";
@@ -7,6 +8,7 @@ import { anyDirty } from "../editorDocument";
 import { isActiveRun, runStateLabel } from "../runState";
 import { collectScripts } from "../workspaceTree";
 import { deviceLabel } from "./DeviceDialog";
+import { ContextMenu, contextMenuPosition, MenuEntry, MenuState } from "./ContextMenu";
 
 export function RunToolbar() {
   const { t } = useTranslation();
@@ -93,10 +95,24 @@ export function RunToolbar() {
     } catch (e) { alert(t("run.stopFailed", { message: String(e) })); }
   };
 
+  // 右键菜单：空白区弹出运行控制；输入框/下拉/按钮上保留原生编辑菜单
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const openMenu = (event: MouseEvent) => {
+    if ((event.target as HTMLElement).closest("input, select, button, textarea")) return;
+    event.preventDefault();
+    const entries: MenuEntry[] = [
+      { label: t("ctxmenu.run"), disabled: !!running || busy || editorBusy || !selectedDeviceId, onSelect: () => void run() },
+      { label: t("ctxmenu.stopRun"), danger: true, disabled: !running, onSelect: () => void stop() },
+      "separator",
+      { label: t("ctxmenu.clearInputs"), disabled: !command && !argsText, onSelect: () => setDraft({ command: "", argsText: "" }) },
+    ];
+    setMenu({ ...contextMenuPosition(event.clientX, event.clientY, entries.length), entries });
+  };
+
   const scriptFiles = collectScripts(workspaceTree);
 
   return (
-    <div className="run-toolbar">
+    <div className="run-toolbar" onContextMenu={openMenu}>
       {Object.values(runs).some(isActiveRun) && <select aria-label={t("run.runningTasksAria")} value={activeRun && isActiveRun(activeRun) ? activeRunId! : ""}
         onChange={(e) => { if (e.target.value) useAppStore.getState().setActiveRun(e.target.value); }}>
         <option value="">{t("run.runningTasks")}</option>
@@ -176,6 +192,7 @@ export function RunToolbar() {
           {activeRun.error && ` — ${activeRun.error}`}
         </span>
       )}
+      <ContextMenu menu={menu} onClose={() => setMenu(null)} />
     </div>
   );
 }

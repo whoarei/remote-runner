@@ -286,6 +286,17 @@ export const en: Messages = {
     discard: "Discard and Continue",
     save: "Save and Continue",
   },
+  ctxmenu: {
+    copy: "Copy",
+    paste: "Paste",
+    selectAll: "Select All",
+    clearTerminal: "Clear Terminal",
+    run: "Run",
+    stopRun: "Stop Run",
+    clearInputs: "Clear Command & Arguments",
+    reconnect: "Reconnect",
+    closeTerminal: "Close Terminal",
+  },
   replay: {
     gap: "[Output exceeded receive capacity; some output was lost. Task status has been resynchronized]",
     trimmed: "[Earlier output exceeded the per-task or total buffer limit; only retained output is shown]",

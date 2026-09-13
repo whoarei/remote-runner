@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -6,6 +7,7 @@ import "@xterm/xterm/css/xterm.css";
 import { api } from "../api";
 import { useTerminalStore, terminalActive, type TerminalTab } from "../terminalStore";
 import { readTerminal, terminalInput } from "../terminalIO";
+import { ContextMenu, contextMenuPosition, MenuEntry, MenuState } from "./ContextMenu";
 
 export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: boolean }) {
   const { t } = useTranslation();
@@ -68,6 +70,43 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
     }
   }, [visible, tab.status?.state, sessionId]);
 
+  // 右键菜单：复制/粘贴/全选/清空/重连/关闭终端
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const openMenu = (event: MouseEvent) => {
+    event.preventDefault();
+    const term = terminal.current;
+    if (!term) return;
+    const connected = tab.status?.state === "connected" && !tab.busy;
+    const entries: MenuEntry[] = [
+      {
+        label: t("ctxmenu.copy"),
+        disabled: !term.getSelection(),
+        onSelect: () => void navigator.clipboard.writeText(term.getSelection()).catch(() => {}),
+      },
+      {
+        // term.paste 会走 onData → terminalInput 的发送/限长管线
+        label: t("ctxmenu.paste"),
+        disabled: !connected,
+        onSelect: () => void navigator.clipboard.readText().then((text) => { if (text) term.paste(text); }).catch(() => {}),
+      },
+      { label: t("ctxmenu.selectAll"), onSelect: () => term.selectAll() },
+      { label: t("ctxmenu.clearTerminal"), onSelect: () => term.clear() },
+      "separator",
+      {
+        label: t("ctxmenu.reconnect"),
+        disabled: terminalActive(tab) || tab.busy,
+        onSelect: () => void useTerminalStore.getState().reconnect(tab.id),
+      },
+      {
+        label: t("ctxmenu.closeTerminal"),
+        danger: true,
+        disabled: tab.busy,
+        onSelect: () => void useTerminalStore.getState().close(tab.id),
+      },
+    ];
+    setMenu({ ...contextMenuPosition(event.clientX, event.clientY, entries.length), entries });
+  };
+
   return <section className="terminal-page" role="tabpanel" id={`panel-${tab.id}`} aria-labelledby={`tab-${tab.id}`} hidden={!visible}>
     <div className="terminal-toolbar">
       <span className={`terminal-status terminal-${tab.status?.state ?? "connecting"}`} aria-live="polite">
@@ -79,6 +118,7 @@ export function TerminalPage({ tab, visible }: { tab: TerminalTab; visible: bool
       <button disabled={tab.busy} title={t("terminal.closeTitle")} onClick={() => void useTerminalStore.getState().close(tab.id)}>{t("terminal.close")}</button>
     </div>
     {(tab.error || tab.status?.error) && <div className="terminal-error" role="alert">{tab.error || tab.status?.error}</div>}
-    <div className="console-body" ref={container} />
+    <div className="console-body" ref={container} onContextMenu={openMenu} />
+    <ContextMenu menu={menu} onClose={() => setMenu(null)} />
   </section>;
 }

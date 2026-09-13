@@ -287,6 +287,17 @@ export const zh = {
     discard: "放弃修改并继续",
     save: "保存并继续",
   },
+  ctxmenu: {
+    copy: "复制",
+    paste: "粘贴",
+    selectAll: "全选",
+    clearTerminal: "清空终端",
+    run: "运行",
+    stopRun: "停止运行",
+    clearInputs: "清空命令与参数",
+    reconnect: "重新连接",
+    closeTerminal: "关闭终端",
+  },
   replay: {
     gap: "[输出超过接收能力，部分输出已丢失；任务状态已重新同步]",
     trimmed: "[较早的输出已超过单任务或总缓存上限，仅显示保留的输出]",

@@ -1,14 +1,16 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { MouseEvent } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { api } from "../api";
 import { useAppStore } from "../store";
-import { runStateLabel } from "../runState";
+import { isActiveRun, runStateLabel } from "../runState";
 import { PanelTitle } from "./PanelTitle";
 import { useShallow } from "zustand/react/shallow";
 import { useTranslation } from "react-i18next";
 import { createConsoleReplay } from "../consoleReplay";
+import { ContextMenu, contextMenuPosition, MenuEntry, MenuState } from "./ContextMenu";
 
 /**
  * Run Console：绑定的是“远程进程”的 stdin/stdout/stderr，不是 SSH shell。
@@ -112,6 +114,42 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
     }
   }, [activeRunId, activeRun?.state]);
 
+  // 右键菜单：复制/粘贴/全选/清空/停止运行
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const openMenu = (event: MouseEvent) => {
+    event.preventDefault();
+    const term = termRef.current;
+    if (!term) return;
+    const entries: MenuEntry[] = [
+      {
+        label: t("ctxmenu.copy"),
+        disabled: !term.getSelection(),
+        onSelect: () => void navigator.clipboard.writeText(term.getSelection()).catch(() => {}),
+      },
+      {
+        // 粘贴写入远程进程 stdin（pty 模式下由远端回显）
+        label: t("ctxmenu.paste"),
+        disabled: !(activeRun && isActiveRun(activeRun)),
+        onSelect: () => void navigator.clipboard.readText().then((text) => {
+          const runId = useAppStore.getState().activeRunId;
+          if (text && runId && useAppStore.getState().runs[runId]?.state === "running") {
+            void api.sendRunInput(runId, text).catch(() => {});
+          }
+        }).catch(() => {}),
+      },
+      { label: t("ctxmenu.selectAll"), onSelect: () => term.selectAll() },
+      { label: t("ctxmenu.clearTerminal"), onSelect: () => term.clear() },
+      "separator",
+      {
+        label: t("ctxmenu.stopRun"),
+        danger: true,
+        disabled: !(activeRun && isActiveRun(activeRun)),
+        onSelect: () => { if (activeRunId) void api.stopRun(activeRunId).catch(() => {}); },
+      },
+    ];
+    setMenu({ ...contextMenuPosition(event.clientX, event.clientY, entries.length), entries });
+  };
+
   return (
     <div className="run-console">
       {!embedded && <PanelTitle className="console-header" title={t("console.runTab")} collapsed={collapsed} onToggle={onToggleCollapse}>
@@ -122,7 +160,8 @@ export function RunConsole({ collapsed, onToggleCollapse, embedded = false }: { 
           </span>
         )}
       </PanelTitle>}
-      <div ref={containerRef} className={`console-body${collapsed ? " collapsed" : ""}`} />
+      <div ref={containerRef} className={`console-body${collapsed ? " collapsed" : ""}`} onContextMenu={openMenu} />
+      <ContextMenu menu={menu} onClose={() => setMenu(null)} />
     </div>
   );
 }
