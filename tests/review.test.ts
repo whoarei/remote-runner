@@ -4,6 +4,7 @@ import React, { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { api, RunStatus } from "../src/api";
 import { useAppStore } from "../src/store";
+import { panelVisibilityPatch } from "../src/layoutState";
 import i18n from "../src/i18n";
 import { HistoryPanel } from "../src/components/HistoryPanel";
 import { RunToolbar } from "../src/components/RunToolbar";
@@ -71,7 +72,7 @@ test("run drafts survive panel remount and layout reset; workspace switch clears
   const s = setup(t);
   useAppStore.setState({ openTabs: [mainTab("disk", "disk")] });
   s.setRunDraft({ mode: "command", entry: "other.py", command: "echo retained", argsText: "a b", consoleMode: "pipe", timeoutSecs: 42 });
-  s.setLayout({ consoleVisible: false });
+  s.setLayout(panelVisibilityPatch(useAppStore.getState().layout, "console", false));
   s.resetLayout();
   const markup = renderToStaticMarkup(createElement(RunToolbar));
   assert.match(markup, /echo retained/);

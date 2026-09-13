@@ -7,6 +7,8 @@ import { requestQuit } from "../appLifecycle";
 import { dirtyTab } from "../editorDocument";
 import { loadLanguagePreference, setLanguage, type LanguagePreference } from "../i18n/language";
 import { useAppStore } from "../store";
+import { panelVisibilityPatch } from "../layoutState";
+import { panelsInDock } from "../panels/registry";
 import { emptyDevice, deviceLabel } from "./DeviceDialog";
 import { openWorkspace } from "../workspacePicker";
 
@@ -168,10 +170,19 @@ export function MenuBar({ onAbout, onCheckUpdate }: { onAbout: () => void; onChe
       label: t("menu.view"),
       entries: [
         { type: "checkbox", label: t("menu.sidebar"), checked: layout.sidebarVisible, onSelect: () => setLayout({ sidebarVisible: !layout.sidebarVisible }) },
-        { type: "checkbox", label: t("menu.workspacePanel"), checked: layout.workspaceVisible, onSelect: () => setLayout({ workspaceVisible: !layout.workspaceVisible, sidebarVisible: true }) },
-        { type: "checkbox", label: t("menu.historyPanel"), checked: layout.historyVisible, onSelect: () => setLayout({ historyVisible: !layout.historyVisible, sidebarVisible: true }) },
-        { type: "checkbox", label: t("menu.commandsPanel"), checked: layout.commandsVisible, onSelect: () => setLayout({ commandsVisible: !layout.commandsVisible, sidebarVisible: true }) },
-        { type: "checkbox", label: t("menu.consolePanel"), checked: layout.consoleVisible, onSelect: () => setLayout({ consoleVisible: !layout.consoleVisible }) },
+        // 面板勾选项由注册表生成：侧栏面板勾选时顺带保证侧栏 dock 可见
+        ...panelsInDock("sidebar").map((panel): MenuEntry => ({
+          type: "checkbox",
+          label: t(panel.titleKey),
+          checked: layout.panelVisible[panel.id],
+          onSelect: () => setLayout({ ...panelVisibilityPatch(layout, panel.id, !layout.panelVisible[panel.id]), sidebarVisible: true }),
+        })),
+        ...panelsInDock("center").map((panel): MenuEntry => ({
+          type: "checkbox",
+          label: t(panel.titleKey),
+          checked: layout.panelVisible[panel.id],
+          onSelect: () => setLayout(panelVisibilityPatch(layout, panel.id, !layout.panelVisible[panel.id])),
+        })),
         { type: "separator" },
         {
           label: t("menu.sidebarPosition"),

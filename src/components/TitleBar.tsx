@@ -5,7 +5,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { errorMessage } from "../api";
 import { anyDirty } from "../editorDocument";
 import i18n from "../i18n";
-import { toggleSidePanel } from "../layoutState";
+import { panelVisibilityPatch, toggleSidePanel } from "../layoutState";
+import { panelsInDock } from "../panels/registry";
 import { useAppStore } from "../store";
 import { startOneClickUpdate } from "../updateFlow";
 import { updateButtonLabel, type UpdateButtonPhase } from "../updateStatus";
@@ -94,19 +95,19 @@ export function TitleBar({ closeReady, onAbout, onCheckUpdate }: { closeReady: b
             <rect x="2.2" y="2.7" width="2.6" height="6.6" rx="0.6" fill="currentColor" />
           </svg>
         </button>
-        <button
-          type="button"
-          className={`titlebar-button${layout.consoleVisible ? " active" : ""}`}
-          aria-label={t("titlebar.toggleConsole")}
-          aria-pressed={layout.consoleVisible}
-          title={t("titlebar.toggleConsole")}
-          onClick={() => setLayout({ consoleVisible: !layout.consoleVisible })}
-        >
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-            <rect x="1" y="1.5" width="10" height="9" rx="1.5" stroke="currentColor" />
-            <rect x="2.2" y="7" width="7.6" height="2.3" rx="0.6" fill="currentColor" />
-          </svg>
-        </button>
+        {panelsInDock("center").map((panel) => (
+          <button
+            key={panel.id}
+            type="button"
+            className={`titlebar-button${layout.panelVisible[panel.id] ? " active" : ""}`}
+            aria-label={t(panel.toggleKey ?? panel.titleKey)}
+            aria-pressed={layout.panelVisible[panel.id]}
+            title={t(panel.toggleKey ?? panel.titleKey)}
+            onClick={() => setLayout(panelVisibilityPatch(layout, panel.id, !layout.panelVisible[panel.id]))}
+          >
+            {panel.icon}
+          </button>
+        ))}
         <button
           type="button"
           className={`titlebar-button${layout.sidebarVisible && layout.sidebarPosition === "right" ? " active" : ""}`}

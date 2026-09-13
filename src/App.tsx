@@ -1,12 +1,8 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { Fragment, Suspense, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { onRunEvents, api } from "./api";
 import { useAppStore } from "./store";
 import { DeviceDialog } from "./components/DeviceDialog";
-import { WorkspacePanel } from "./components/WorkspacePanel";
-import { ConsolePanel } from "./components/ConsolePanel";
-import { HistoryPanel } from "./components/HistoryPanel";
-import { CommandsPanel } from "./components/CommandsPanel";
 import { UnsavedDialog } from "./components/UnsavedDialog";
 import { TitleBar } from "./components/TitleBar";
 import { AboutDialog } from "./components/AboutDialog";
@@ -18,10 +14,10 @@ import { anyDirty } from "./editorDocument";
 import { errorMessage } from "./api";
 import i18n from "./i18n";
 import { requestQuit } from "./appLifecycle";
-import { clampSidebarWidth, clampConsoleHeight, clampSideSplit, DEFAULT_LAYOUT } from "./layoutState";
+import { clampSidebarWidth, clampSplit, panelCollapsePatch, DEFAULT_LAYOUT } from "./layoutState";
+import { panelsInDock, type PanelId } from "./panels/registry";
+import { PANEL_COMPONENTS } from "./panels/components";
 import { checkForAvailableUpdate } from "./updateStatus";
-
-const Editor = lazy(() => import("./components/Editor").then((module) => ({ default: module.Editor })));
 
 export default function App() {
   const { t } = useTranslation();
@@ -76,82 +72,117 @@ export default function App() {
   const layout = useAppStore((state) => state.layout);
   const setLayout = useAppStore((state) => state.setLayout);
   const sideRef = useRef<HTMLElement>(null);
-  const sidebarVisible = layout.sidebarVisible && (layout.workspaceVisible || layout.historyVisible || layout.commandsVisible);
-  const bothSidePanels = layout.workspaceVisible && layout.historyVisible;
-  const bothExpanded = bothSidePanels && !layout.workspaceCollapsed && !layout.historyCollapsed;
-  // 预置命令面板不参与 sideSplit：有其他展开面板时限制最大高度，独占侧栏时占满
-  const otherSideExpanded =
-    (layout.workspaceVisible && !layout.workspaceCollapsed) ||
-    (layout.historyVisible && !layout.historyCollapsed);
+  const centerRef = useRef<HTMLDivElement>(null);
 
-  const sidebar = sidebarVisible && (
+  const visible = (id: PanelId) => layout.panelVisible[id];
+  const collapsed = (id: PanelId) => layout.panelCollapsed[id];
+  const toggleCollapse = (id: PanelId) => () => setLayout(panelCollapsePatch(layout, id, !layout.panelCollapsed[id]));
+  const setSplit = (dock: keyof typeof layout.splits, ratio: number) =>
+    setLayout({ splits: { ...layout.splits, [dock]: clampSplit(ratio, DEFAULT_LAYOUT.splits[dock]) } });
+
+  // ---- 侧栏 dock：面板按注册表顺序堆叠；高度分配沿用既有语义 ----
+  // Workspace 与 History 同时展开时按 splits.sidebar 分比例并显示分割条；
+  // 预置命令面板不参与比例分配：有其他展开面板时限制最大高度，独占侧栏时占满。
+  const sidebarPanels = panelsInDock("sidebar");
+  const sidebarShown = layout.sidebarVisible && sidebarPanels.some((panel) => visible(panel.id));
+  const bothSideExpanded = visible("workspace") && visible("history") && !collapsed("workspace") && !collapsed("history");
+  const otherSideExpanded =
+    (visible("workspace") && !collapsed("workspace")) ||
+    (visible("history") && !collapsed("history"));
+
+  const sideSectionStyle = (id: PanelId): CSSProperties | undefined => {
+    if (collapsed(id)) return { flex: "0 0 auto" };
+    if (id === "workspace" && bothSideExpanded) return { flexGrow: layout.splits.sidebar, flexBasis: 0 };
+    if (id === "history" && bothSideExpanded) return { flexGrow: 1 - layout.splits.sidebar, flexBasis: 0 };
+    if (id === "commands" && !otherSideExpanded) return { flex: 1, maxHeight: "none" };
+    return undefined;
+  };
+
+  const sidebarHandle = (
+    <SplitHandle
+      direction="vertical"
+      label={t("app.resizeSidebar")}
+      onDelta={(delta) => setLayout({ sidebarWidth: clampSidebarWidth(layout.sidebarWidth + (layout.sidebarPosition === "left" ? delta : -delta)) })}
+      onReset={() => setLayout({ sidebarWidth: DEFAULT_LAYOUT.sidebarWidth })}
+    />
+  );
+
+  const sidebarDock = sidebarShown && (
     <>
-      {layout.sidebarPosition === "right" && (
-        <SplitHandle
-          direction="vertical"
-          label={t("app.resizeSidebar")}
-          onDelta={(delta) => setLayout({ sidebarWidth: clampSidebarWidth(layout.sidebarWidth - delta) })}
-          onReset={() => setLayout({ sidebarWidth: DEFAULT_LAYOUT.sidebarWidth })}
-        />
-      )}
-      <aside className="side" style={{ width: layout.sidebarWidth }} ref={sideRef}>
-        {layout.workspaceVisible && (
-          <div className="side-section" style={
-            layout.workspaceCollapsed ? { flex: "0 0 auto" }
-              : bothExpanded ? { flexGrow: layout.sideSplit, flexBasis: 0 }
-              : undefined
-          }>
-            <WorkspacePanel
-              collapsed={layout.workspaceCollapsed}
-              onToggleCollapse={() => setLayout({ workspaceCollapsed: !layout.workspaceCollapsed })}
-            />
-          </div>
-        )}
-        {bothExpanded && (
-          <SplitHandle
-            direction="horizontal"
-            label={t("app.resizeSideSplit")}
-            onDelta={(delta) => {
-              const height = sideRef.current?.clientHeight ?? 0;
-              if (height > 0) setLayout({ sideSplit: clampSideSplit(layout.sideSplit + delta / height) });
-            }}
-            onReset={() => setLayout({ sideSplit: DEFAULT_LAYOUT.sideSplit })}
-          />
-        )}
-        {layout.commandsVisible && (
-          <div className="side-section commands-section" style={
-            layout.commandsCollapsed ? { flex: "0 0 auto" }
-              : otherSideExpanded ? undefined
-              : { flex: 1, maxHeight: "none" }
-          }>
-            <CommandsPanel
-              collapsed={layout.commandsCollapsed}
-              onToggleCollapse={() => setLayout({ commandsCollapsed: !layout.commandsCollapsed })}
-            />
-          </div>
-        )}
-        {layout.historyVisible && (
-          <div className="side-section" style={
-            layout.historyCollapsed ? { flex: "0 0 auto" }
-              : bothExpanded ? { flexGrow: 1 - layout.sideSplit, flexBasis: 0 }
-              : undefined
-          }>
-            <HistoryPanel
-              collapsed={layout.historyCollapsed}
-              onToggleCollapse={() => setLayout({ historyCollapsed: !layout.historyCollapsed })}
-            />
-          </div>
-        )}
+      {layout.sidebarPosition === "right" && sidebarHandle}
+      <aside className="dock dock-side" style={{ width: layout.sidebarWidth }} ref={sideRef}>
+        {sidebarPanels.map((panel) => {
+          const Component = PANEL_COMPONENTS[panel.id];
+          return (
+            <Fragment key={panel.id}>
+              {panel.id === "history" && bothSideExpanded && (
+                <SplitHandle
+                  direction="horizontal"
+                  label={t("app.resizeSideSplit")}
+                  onDelta={(delta) => {
+                    const height = sideRef.current?.clientHeight ?? 0;
+                    if (height > 0) setSplit("sidebar", layout.splits.sidebar + delta / height);
+                  }}
+                  onReset={() => setLayout({ splits: { ...layout.splits, sidebar: DEFAULT_LAYOUT.splits.sidebar } })}
+                />
+              )}
+              {visible(panel.id) && (
+                <div className={`dock-section${panel.id === "commands" ? " commands-section" : ""}`} style={sideSectionStyle(panel.id)}>
+                  <Suspense fallback={null}>
+                    <Component visible collapsed={collapsed(panel.id)} onToggleCollapse={toggleCollapse(panel.id)} />
+                  </Suspense>
+                </div>
+              )}
+            </Fragment>
+          );
+        })}
       </aside>
-      {layout.sidebarPosition === "left" && (
-        <SplitHandle
-          direction="vertical"
-          label={t("app.resizeSidebar")}
-          onDelta={(delta) => setLayout({ sidebarWidth: clampSidebarWidth(layout.sidebarWidth + delta) })}
-          onReset={() => setLayout({ sidebarWidth: DEFAULT_LAYOUT.sidebarWidth })}
-        />
-      )}
+      {layout.sidebarPosition === "left" && sidebarHandle}
     </>
+  );
+
+  // ---- 中间 dock：文件编辑区与控制面板区为平等结构，按 splits.center 分配高度 ----
+  // 两区都允许隐藏：dock 以 hidden 属性隐藏（不卸载），编辑器与终端实例保持存活。
+  const centerPanels = panelsInDock("center");
+  const centerShown = centerPanels.some((panel) => visible(panel.id));
+  const bothCenterExpanded = visible("editor") && visible("console") && !collapsed("editor") && !collapsed("console");
+
+  const centerSectionStyle = (id: PanelId): CSSProperties | undefined => {
+    if (collapsed(id)) return { flex: "0 0 auto" };
+    if (bothCenterExpanded) return { flexGrow: id === "editor" ? layout.splits.center : 1 - layout.splits.center, flexBasis: 0 };
+    return undefined;
+  };
+
+  const centerDock = (
+    <div className="dock dock-center" ref={centerRef} hidden={!centerShown}>
+      {centerPanels.map((panel, index) => {
+        const Component = PANEL_COMPONENTS[panel.id];
+        return (
+          <Fragment key={panel.id}>
+            {index > 0 && bothCenterExpanded && (
+              <SplitHandle
+                direction="horizontal"
+                label={t("app.resizeCenter")}
+                onDelta={(delta) => {
+                  const height = centerRef.current?.clientHeight ?? 0;
+                  if (height > 0) setSplit("center", layout.splits.center + delta / height);
+                }}
+                onReset={() => setLayout({ splits: { ...layout.splits, center: DEFAULT_LAYOUT.splits.center } })}
+              />
+            )}
+            <section
+              className={`dock-section ${panel.id}-section`}
+              hidden={!visible(panel.id)}
+              style={visible(panel.id) ? centerSectionStyle(panel.id) : undefined}
+            >
+              <Suspense fallback={panel.id === "editor" ? <div className="editor empty">{t("app.loadingEditor")}</div> : null}>
+                <Component visible={visible(panel.id)} collapsed={collapsed(panel.id)} onToggleCollapse={toggleCollapse(panel.id)} />
+              </Suspense>
+            </section>
+          </Fragment>
+        );
+      })}
+    </div>
   );
 
   return (
@@ -168,41 +199,9 @@ export default function App() {
         }}
       />
       <main className="app-main">
-        {layout.sidebarPosition === "left" && sidebar}
-        <div className="workbench">
-          <section className="center" style={layout.editorCollapsed ? { flex: "0 0 auto" } : undefined}>
-            <Suspense fallback={<div className="editor empty">{t("app.loadingEditor")}</div>}>
-              <Editor
-                collapsed={layout.editorCollapsed}
-                onToggleCollapse={() => setLayout({ editorCollapsed: !layout.editorCollapsed })}
-              />
-            </Suspense>
-          </section>
-          {(
-            <>
-              {layout.consoleVisible && !layout.consoleCollapsed && !layout.editorCollapsed && (
-                <SplitHandle
-                  direction="horizontal"
-                  label={t("app.resizeConsole")}
-                  onDelta={(delta) => setLayout({ consoleHeight: clampConsoleHeight(layout.consoleHeight - delta) })}
-                  onReset={() => setLayout({ consoleHeight: DEFAULT_LAYOUT.consoleHeight })}
-                />
-              )}
-              <footer className="app-footer" hidden={!layout.consoleVisible} style={
-                layout.consoleCollapsed ? undefined
-                  : layout.editorCollapsed ? { flex: 1 } // 编辑区折叠时控制台占满释放的高度
-                  : { height: layout.consoleHeight }
-              }>
-                <ConsolePanel
-                  visible={layout.consoleVisible}
-                  collapsed={layout.consoleCollapsed}
-                  onToggleCollapse={() => setLayout({ consoleCollapsed: !layout.consoleCollapsed })}
-                />
-              </footer>
-            </>
-          )}
-        </div>
-        {layout.sidebarPosition === "right" && sidebar}
+        {layout.sidebarPosition === "left" && sidebarDock}
+        {centerDock}
+        {layout.sidebarPosition === "right" && sidebarDock}
       </main>
     </div>
   );

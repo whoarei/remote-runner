@@ -4,18 +4,18 @@ import {
   DEFAULT_LAYOUT,
   SIDEBAR_MIN,
   SIDEBAR_MAX,
-  CONSOLE_MIN,
-  CONSOLE_MAX,
-  SIDE_SPLIT_MIN,
-  SIDE_SPLIT_MAX,
+  SPLIT_MIN,
+  SPLIT_MAX,
   clampSidebarWidth,
-  clampConsoleHeight,
-  clampSideSplit,
+  clampSplit,
   normalizeLayout,
   toggleSidePanel,
+  panelVisibilityPatch,
+  panelCollapsePatch,
   loadLayout,
   saveLayout,
 } from "../src/layoutState";
+import { PANELS } from "../src/panels/registry";
 import { useAppStore } from "../src/store";
 
 function mockLocalStorage(t: test.TestContext) {
@@ -43,46 +43,86 @@ test("normalizeLayout falls back to defaults for garbage input", () => {
   assert.deepEqual(normalizeLayout([]), DEFAULT_LAYOUT);
 });
 
+test("panel flags cover every registered panel and default to visible", () => {
+  for (const panel of PANELS) {
+    assert.equal(DEFAULT_LAYOUT.panelVisible[panel.id], panel.defaultVisible);
+    assert.equal(DEFAULT_LAYOUT.panelCollapsed[panel.id], false);
+  }
+  assert.deepEqual(Object.keys(DEFAULT_LAYOUT.splits), ["sidebar", "center"]);
+});
+
 test("normalizeLayout keeps valid fields and fills missing ones", () => {
-  const layout = normalizeLayout({ sidebarWidth: 300, consoleVisible: false, sidebarPosition: "right", workspaceCollapsed: true, consoleCollapsed: true, editorCollapsed: true });
+  const layout = normalizeLayout({
+    sidebarWidth: 300,
+    sidebarPosition: "right",
+    panelVisible: { console: false },
+    panelCollapsed: { workspace: true, editor: true },
+  });
   assert.equal(layout.sidebarWidth, 300);
-  assert.equal(layout.consoleVisible, false);
   assert.equal(layout.sidebarPosition, "right");
-  assert.equal(layout.workspaceCollapsed, true);
-  assert.equal(layout.consoleCollapsed, true);
-  assert.equal(layout.editorCollapsed, true);
-  assert.equal(layout.historyCollapsed, DEFAULT_LAYOUT.historyCollapsed);
-  assert.equal(layout.workspaceVisible, DEFAULT_LAYOUT.workspaceVisible);
-  assert.equal(layout.sideSplit, DEFAULT_LAYOUT.sideSplit);
+  assert.equal(layout.panelVisible.console, false);
+  assert.equal(layout.panelCollapsed.workspace, true);
+  assert.equal(layout.panelCollapsed.editor, true);
+  assert.equal(layout.panelVisible.workspace, DEFAULT_LAYOUT.panelVisible.workspace);
+  assert.equal(layout.panelCollapsed.history, false);
+  assert.equal(layout.splits.sidebar, DEFAULT_LAYOUT.splits.sidebar);
+});
+
+test("normalizeLayout migrates v1 legacy fields", () => {
+  const layout = normalizeLayout({
+    workspaceVisible: false,
+    consoleVisible: false,
+    editorCollapsed: true,
+    consoleCollapsed: true,
+    sideSplit: 0.7,
+  });
+  assert.equal(layout.panelVisible.workspace, false);
+  assert.equal(layout.panelVisible.console, false);
+  assert.equal(layout.panelCollapsed.editor, true);
+  assert.equal(layout.panelCollapsed.console, true);
+  assert.equal(layout.splits.sidebar, 0.7);
+  // v1 没有编辑区显隐字段，回落默认值
+  assert.equal(layout.panelVisible.editor, DEFAULT_LAYOUT.panelVisible.editor);
+  // v1 的 consoleHeight 像素值无法换算为比例，回落默认值
+  assert.equal(layout.splits.center, DEFAULT_LAYOUT.splits.center);
+});
+
+test("new-format panel flags take precedence over legacy fields", () => {
+  const layout = normalizeLayout({ panelVisible: { workspace: true }, workspaceVisible: false });
+  assert.equal(layout.panelVisible.workspace, true);
 });
 
 test("normalizeLayout clamps out-of-range values and rejects wrong types", () => {
   const layout = normalizeLayout({
     sidebarWidth: 99999,
-    consoleHeight: -5,
-    sideSplit: 0,
     sidebarPosition: "up",
-    workspaceVisible: "yes",
-    editorCollapsed: 1,
+    splits: { sidebar: 0, center: 99 },
+    panelVisible: { workspace: "yes", nope: true },
+    panelCollapsed: { editor: 1 },
   });
   assert.equal(layout.sidebarWidth, SIDEBAR_MAX);
-  assert.equal(layout.consoleHeight, CONSOLE_MIN);
-  assert.equal(layout.sideSplit, SIDE_SPLIT_MIN);
   assert.equal(layout.sidebarPosition, "left");
-  assert.equal(layout.workspaceVisible, DEFAULT_LAYOUT.workspaceVisible);
-  assert.equal(layout.editorCollapsed, DEFAULT_LAYOUT.editorCollapsed);
+  assert.equal(layout.splits.sidebar, SPLIT_MIN);
+  assert.equal(layout.splits.center, SPLIT_MAX);
+  assert.equal(layout.panelVisible.workspace, DEFAULT_LAYOUT.panelVisible.workspace);
+  assert.equal(layout.panelCollapsed.editor, false);
+  // 注册表之外的未知面板 id 被丢弃
+  assert.equal("nope" in layout.panelVisible, false);
+});
+
+test("center panels may all be hidden (no minimum-visibility guard)", () => {
+  const layout = normalizeLayout({ panelVisible: { editor: false, console: false } });
+  assert.equal(layout.panelVisible.editor, false);
+  assert.equal(layout.panelVisible.console, false);
 });
 
 test("clamp helpers bound values and fall back on non-finite input", () => {
   assert.equal(clampSidebarWidth(SIDEBAR_MIN - 1), SIDEBAR_MIN);
   assert.equal(clampSidebarWidth(SIDEBAR_MAX + 1), SIDEBAR_MAX);
   assert.equal(clampSidebarWidth(NaN), DEFAULT_LAYOUT.sidebarWidth);
-  assert.equal(clampConsoleHeight(CONSOLE_MIN - 1), CONSOLE_MIN);
-  assert.equal(clampConsoleHeight(CONSOLE_MAX + 1), CONSOLE_MAX);
-  assert.equal(clampConsoleHeight(Infinity), DEFAULT_LAYOUT.consoleHeight);
-  assert.equal(clampSideSplit(SIDE_SPLIT_MIN - 0.1), SIDE_SPLIT_MIN);
-  assert.equal(clampSideSplit(SIDE_SPLIT_MAX + 0.1), SIDE_SPLIT_MAX);
-  assert.equal(clampSideSplit(NaN), DEFAULT_LAYOUT.sideSplit);
+  assert.equal(clampSplit(SPLIT_MIN - 0.1, 0.6), SPLIT_MIN);
+  assert.equal(clampSplit(SPLIT_MAX + 0.1, 0.6), SPLIT_MAX);
+  assert.equal(clampSplit(NaN, 0.6), 0.6);
 });
 
 test("normalizeLayout falls back sidebarVisible to default on missing/invalid input", () => {
@@ -106,12 +146,27 @@ test("toggleSidePanel hides, moves, and shows the sidebar", () => {
   assert.deepEqual(toggleSidePanel(hidden, "right"), { sidebarVisible: true, sidebarPosition: "right" });
 });
 
+test("panel patch helpers update only the targeted panel", () => {
+  const visiblePatch = panelVisibilityPatch(DEFAULT_LAYOUT, "editor", false);
+  assert.equal(visiblePatch.panelVisible?.editor, false);
+  assert.equal(visiblePatch.panelVisible?.console, DEFAULT_LAYOUT.panelVisible.console);
+  const collapsePatch = panelCollapsePatch(DEFAULT_LAYOUT, "console", true);
+  assert.equal(collapsePatch.panelCollapsed?.console, true);
+  assert.equal(collapsePatch.panelCollapsed?.editor, false);
+});
+
 test("loadLayout/saveLayout round-trip and survive corrupted storage", (t) => {
   const data = mockLocalStorage(t);
   // 无存储 → 默认布局
   assert.deepEqual(loadLayout(), DEFAULT_LAYOUT);
 
-  const custom = { ...DEFAULT_LAYOUT, sidebarWidth: 333, consoleVisible: false, sidebarPosition: "right" as const };
+  const custom = {
+    ...DEFAULT_LAYOUT,
+    sidebarWidth: 333,
+    sidebarPosition: "right" as const,
+    panelVisible: { ...DEFAULT_LAYOUT.panelVisible, console: false },
+    splits: { ...DEFAULT_LAYOUT.splits, center: 0.4 },
+  };
   saveLayout(custom);
   assert.deepEqual(loadLayout(), custom);
 
@@ -130,11 +185,11 @@ test("store setLayout merges patches, normalizes, and persists", (t) => {
   t.after(() => useAppStore.setState({ layout: original }));
 
   const { setLayout, resetLayout } = useAppStore.getState();
-  setLayout({ sidebarWidth: 280, historyVisible: false });
+  setLayout({ sidebarWidth: 280, ...panelVisibilityPatch(useAppStore.getState().layout, "history", false) });
   let layout = useAppStore.getState().layout;
   assert.equal(layout.sidebarWidth, 280);
-  assert.equal(layout.historyVisible, false);
-  assert.equal(layout.workspaceVisible, DEFAULT_LAYOUT.workspaceVisible);
+  assert.equal(layout.panelVisible.history, false);
+  assert.equal(layout.panelVisible.workspace, DEFAULT_LAYOUT.panelVisible.workspace);
   assert.deepEqual(loadLayout(), layout);
 
   // 越界 patch 会被 clamp

@@ -5,7 +5,7 @@ import i18n from "./i18n";
 import { appendOutput, MAX_TOTAL_OUTPUT_BYTES, OutputBuffer, trimOutput } from "./outputBuffer";
 import { DEFAULT_RUN_DRAFT, isActiveRun, newestStatus, RunDraft } from "./runState";
 import { loadWorkspaceHistory, rememberWorkspace, saveWorkspaceHistory } from "./workspaceHistory";
-import { DEFAULT_LAYOUT, LayoutState, loadLayout, normalizeLayout, saveLayout } from "./layoutState";
+import { LayoutState, loadLayout, normalizeLayout, panelCollapsePatch, panelVisibilityPatch, saveLayout } from "./layoutState";
 import { collectScripts, dropSubtree, isWithin, joinPath, nameOf, parentOf, rekeySubtree, rootTree, withNode, WORKSPACE_ROOT, WorkspacePath, WorkspaceTree } from "./workspaceTree";
 
 interface AppState {
@@ -98,6 +98,14 @@ function workspaceChangeBlocker(
   return null;
 }
 
+/** 打开 / 激活文件意味着要看内容：编辑区隐藏或折叠时自动恢复 */
+function revealEditor(get: () => AppState) {
+  const layout = get().layout;
+  if (!layout.panelVisible.editor || layout.panelCollapsed.editor) {
+    get().setLayout({ ...panelVisibilityPatch(layout, "editor", true), ...panelCollapsePatch(layout, "editor", false) });
+  }
+}
+
 /** Retain live runs and the selected history entry; bound output across all runs. */
 function pruneRuns(state: Pick<AppState, "runs" | "history" | "outputBuffers" | "activeRunId">, pending: string[] = []) {
   const keep = new Set(state.history.map((h) => h.run_id));
@@ -161,7 +169,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   resetLayout: () => {
-    const layout = { ...DEFAULT_LAYOUT };
+    const layout = normalizeLayout(undefined);
     saveLayout(layout);
     set({ layout });
   },
@@ -330,7 +338,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     // 已打开的文件只激活标签，不重新读盘
     if (get().openTabs.some((tab) => tab.name === name)) {
       get().activateFile(name);
-      if (get().layout.editorCollapsed) get().setLayout({ editorCollapsed: false });
       return;
     }
     const sequence = ++loadSequence;
@@ -341,8 +348,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         set((s) => ({ openTabs: [...s.openTabs, { name, fileContent: doc.content, savedContent: doc.content,
           revision: doc.revision, eol: doc.eol, bom: doc.bom, language: inferLanguage(name),
           conflict: false, generation: 1 }], activeFile: name }));
-        // 打开文件意味着要看内容，折叠中的编辑区自动展开
-        if (get().layout.editorCollapsed) get().setLayout({ editorCollapsed: false });
+        revealEditor(get);
       }
     } catch (e) {
       if (sequence === loadSequence) set({ editorError: errorMessage(e) });
@@ -354,8 +360,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   activateFile: (name) => {
     if (get().openTabs.some((tab) => tab.name === name)) {
       set({ activeFile: name });
-      // 激活标签同样意味着要看内容
-      if (get().layout.editorCollapsed) get().setLayout({ editorCollapsed: false });
+      revealEditor(get);
     }
   },
 
