@@ -29,16 +29,19 @@ function PresetEditDialog({ draft, onChange, onSave, onCancel }: {
   const { t } = useTranslation();
   const dialog = useRef<HTMLDialogElement>(null);
   const nameInput = useRef<HTMLInputElement>(null);
+  // draft 每次击键都会换成新对象，不能作为 effect 依赖，否则焦点会一直被抢回名称框；
+  // 只在打开 / 关闭（null 与非 null 切换）时处理 showModal / 初始聚焦。
+  const open = draft != null;
   useEffect(() => {
     const element = dialog.current;
     if (!element) return;
-    if (draft) {
+    if (open) {
       if (!element.open) element.showModal();
       nameInput.current?.focus();
     } else if (element.open) {
       element.close();
     }
-  }, [draft]);
+  }, [open]);
   const valid = draft != null && draft.name.trim() !== "" && draft.command.trim() !== "";
   return (
     <dialog
