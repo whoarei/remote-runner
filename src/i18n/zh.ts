@@ -9,6 +9,7 @@ export const zh = {
     openWorkspace: "打开工作区…",
     recentWorkspaces: "最近的工作区",
     noRecent: "（无最近记录）",
+    closeWorkspace: "关闭工作区",
     addDevice: "添加设备…",
     editDevice: "编辑设备",
     noDevices: "（无设备）",

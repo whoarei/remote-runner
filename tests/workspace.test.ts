@@ -123,6 +123,38 @@ test("opening a workspace loads the root and expanding a directory loads it once
   assert.equal(useAppStore.getState().workspaceTree.sub.expanded, true);
 });
 
+test("closing the workspace clears tabs, tree and entry draft without touching disk or recent history", async (t) => {
+  const previous = useAppStore.getState();
+  t.after(() => useAppStore.setState(previous, true));
+  useAppStore.setState({
+    ...treeState(),
+    recentWorkspaces: ["/work"],
+    openTabs: [makeTab("main.py")],
+    activeFile: "main.py",
+    runDraft: { ...DEFAULT_RUN_DRAFT, entry: "main.py" },
+  });
+  const listed: string[] = [];
+  t.mock.method(api, "listWorkspaceDir", async (_dir: string, subdir: string) => { listed.push(subdir); return []; });
+  await useAppStore.getState().setWorkspaceDir(null);
+  const state = useAppStore.getState();
+  assert.equal(state.workspaceDir, null);
+  assert.deepEqual(state.workspaceTree, {});
+  assert.deepEqual(state.openTabs, []);
+  assert.equal(state.activeFile, null);
+  assert.equal(state.runDraft.entry, "");
+  assert.deepEqual(state.recentWorkspaces, ["/work"]);
+  assert.deepEqual(listed, []);
+
+  // 有未保存修改时复用保存 / 放弃 / 取消确认；取消则保留当前工作区
+  useAppStore.setState({ ...treeState(), openTabs: [makeTab("dirty.py", "changed", "saved")], activeFile: "dirty.py" });
+  const closing = useAppStore.getState().setWorkspaceDir(null);
+  const prompt = useAppStore.getState().changePrompt;
+  assert.ok(prompt);
+  prompt.resolve("cancel");
+  await closing;
+  assert.equal(useAppStore.getState().workspaceDir, "/work");
+});
+
 test("create refreshes the parent directory and surfaces backend errors", async (t) => {
   const previous = useAppStore.getState();
   t.after(() => useAppStore.setState(previous, true));

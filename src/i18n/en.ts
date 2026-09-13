@@ -8,6 +8,7 @@ export const en: Messages = {
     openWorkspace: "Open Workspace…",
     recentWorkspaces: "Recent Workspaces",
     noRecent: "(No recent workspaces)",
+    closeWorkspace: "Close Workspace",
     addDevice: "Add Device…",
     editDevice: "Edit Device",
     noDevices: "(No devices)",

@@ -91,6 +91,7 @@ export function MenuBar({ onAbout, onCheckUpdate }: { onAbout: () => void; onChe
   const setLayout = useAppStore((state) => state.setLayout);
   const resetLayout = useAppStore((state) => state.resetLayout);
   const recentWorkspaces = useAppStore((state) => state.recentWorkspaces);
+  const workspaceDir = useAppStore((state) => state.workspaceDir);
   const devices = useAppStore((state) => state.devices);
   const dirty = useAppStore((state) => {
     const tab = state.openTabs.find((t) => t.name === state.activeFile);
@@ -140,6 +141,12 @@ export function MenuBar({ onAbout, onCheckUpdate }: { onAbout: () => void; onChe
           children: recentWorkspaces.length > 0
             ? recentWorkspaces.map((dir) => ({ label: dir, onSelect: () => void openWorkspace(dir) }))
             : [{ label: t("menu.noRecent"), disabled: true }],
+        },
+        // 关闭工作区与打开走同一条 setWorkspaceDir 路径（含未保存确认），仅传 null
+        {
+          label: t("menu.closeWorkspace"),
+          disabled: !workspaceDir || fileBusy,
+          onSelect: () => void useAppStore.getState().setWorkspaceDir(null),
         },
         { type: "separator" },
         { label: t("menu.addDevice"), onSelect: () => useAppStore.getState().openDeviceDialog(emptyDevice()) },
