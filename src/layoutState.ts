@@ -11,9 +11,12 @@ export interface LayoutState {
   workspaceVisible: boolean;
   historyVisible: boolean;
   consoleVisible: boolean;
+  /** 预置命令面板显隐 */
+  commandsVisible: boolean;
   /** 面板折叠：折叠后只显示标题条，展开状态独立于显隐 */
   workspaceCollapsed: boolean;
   historyCollapsed: boolean;
+  commandsCollapsed: boolean;
   /** 控制台折叠：折叠后只保留运行工具栏和标题条，终端保持存活仅隐藏 */
   consoleCollapsed: boolean;
   /** 编辑区折叠：折叠后只保留编辑器标题条，释放的高度由展开中的控制台占满 */
@@ -33,8 +36,10 @@ export const DEFAULT_LAYOUT: LayoutState = {
   workspaceVisible: true,
   historyVisible: true,
   consoleVisible: true,
+  commandsVisible: true,
   workspaceCollapsed: false,
   historyCollapsed: false,
+  commandsCollapsed: false,
   consoleCollapsed: false,
   editorCollapsed: false,
   sidebarWidth: 260,
@@ -86,8 +91,10 @@ export function normalizeLayout(value: unknown): LayoutState {
     workspaceVisible: clampBoolean(source.workspaceVisible, DEFAULT_LAYOUT.workspaceVisible),
     historyVisible: clampBoolean(source.historyVisible, DEFAULT_LAYOUT.historyVisible),
     consoleVisible: clampBoolean(source.consoleVisible, DEFAULT_LAYOUT.consoleVisible),
+    commandsVisible: clampBoolean(source.commandsVisible, DEFAULT_LAYOUT.commandsVisible),
     workspaceCollapsed: clampBoolean(source.workspaceCollapsed, DEFAULT_LAYOUT.workspaceCollapsed),
     historyCollapsed: clampBoolean(source.historyCollapsed, DEFAULT_LAYOUT.historyCollapsed),
+    commandsCollapsed: clampBoolean(source.commandsCollapsed, DEFAULT_LAYOUT.commandsCollapsed),
     consoleCollapsed: clampBoolean(source.consoleCollapsed, DEFAULT_LAYOUT.consoleCollapsed),
     editorCollapsed: clampBoolean(source.editorCollapsed, DEFAULT_LAYOUT.editorCollapsed),
     sidebarWidth: clampSidebarWidth(source.sidebarWidth as number),

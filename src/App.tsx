@@ -6,6 +6,7 @@ import { DeviceDialog } from "./components/DeviceDialog";
 import { WorkspacePanel } from "./components/WorkspacePanel";
 import { ConsolePanel } from "./components/ConsolePanel";
 import { HistoryPanel } from "./components/HistoryPanel";
+import { CommandsPanel } from "./components/CommandsPanel";
 import { UnsavedDialog } from "./components/UnsavedDialog";
 import { TitleBar } from "./components/TitleBar";
 import { AboutDialog } from "./components/AboutDialog";
@@ -75,9 +76,13 @@ export default function App() {
   const layout = useAppStore((state) => state.layout);
   const setLayout = useAppStore((state) => state.setLayout);
   const sideRef = useRef<HTMLElement>(null);
-  const sidebarVisible = layout.sidebarVisible && (layout.workspaceVisible || layout.historyVisible);
+  const sidebarVisible = layout.sidebarVisible && (layout.workspaceVisible || layout.historyVisible || layout.commandsVisible);
   const bothSidePanels = layout.workspaceVisible && layout.historyVisible;
   const bothExpanded = bothSidePanels && !layout.workspaceCollapsed && !layout.historyCollapsed;
+  // 预置命令面板不参与 sideSplit：有其他展开面板时限制最大高度，独占侧栏时占满
+  const otherSideExpanded =
+    (layout.workspaceVisible && !layout.workspaceCollapsed) ||
+    (layout.historyVisible && !layout.historyCollapsed);
 
   const sidebar = sidebarVisible && (
     <>
@@ -122,6 +127,18 @@ export default function App() {
             <HistoryPanel
               collapsed={layout.historyCollapsed}
               onToggleCollapse={() => setLayout({ historyCollapsed: !layout.historyCollapsed })}
+            />
+          </div>
+        )}
+        {layout.commandsVisible && (
+          <div className="side-section commands-section" style={
+            layout.commandsCollapsed ? { flex: "0 0 auto" }
+              : otherSideExpanded ? undefined
+              : { flex: 1, maxHeight: "none" }
+          }>
+            <CommandsPanel
+              collapsed={layout.commandsCollapsed}
+              onToggleCollapse={() => setLayout({ commandsCollapsed: !layout.commandsCollapsed })}
             />
           </div>
         )}

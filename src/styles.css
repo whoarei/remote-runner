@@ -319,6 +319,12 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
   min-width: 0;
 }
 
+.panel-actions button {
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .panel-chevron {
   width: 12px;
   flex-shrink: 0;
@@ -651,6 +657,112 @@ body.split-dragging-horizontal { cursor: row-resize; user-select: none; }
 .history-meta {
   color: #777;
   font-size: 11px;
+}
+
+/* ---------- preset commands ---------- */
+.commands-section {
+  flex: 0 1 auto;
+  max-height: 45%;
+}
+
+.commands-panel {
+  flex: 1;
+  min-height: 0;
+  border-top: 1px solid #2a2b30;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.commands-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overflow: auto;
+  min-height: 0;
+}
+
+.commands-list li {
+  padding: 5px 12px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.commands-list li:hover {
+  background: #26272d;
+}
+
+.commands-list li.empty {
+  color: #666;
+  cursor: default;
+}
+
+.commands-label {
+  color: #ccc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.commands-meta {
+  color: #777;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- preset command edit dialog ---------- */
+.preset-dialog {
+  color: #ddd;
+  background: #23252d;
+  border: 1px solid #555;
+  border-radius: 8px;
+  width: min(520px, calc(100vw - 32px));
+  padding: 20px;
+}
+
+.preset-dialog::backdrop {
+  background: #0009;
+}
+
+.preset-dialog h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+
+.preset-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: #999;
+}
+
+.preset-dialog textarea {
+  background: #26272d;
+  color: #ddd;
+  border: 1px solid #3a3b42;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: Consolas, "Courier New", monospace;
+  resize: vertical;
+  min-height: 60px;
+}
+
+.preset-dialog-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.preset-dialog-row input[type="number"] {
+  width: 72px;
 }
 
 /* ---------- widgets ---------- */

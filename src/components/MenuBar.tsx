@@ -170,6 +170,7 @@ export function MenuBar({ onAbout, onCheckUpdate }: { onAbout: () => void; onChe
         { type: "checkbox", label: t("menu.sidebar"), checked: layout.sidebarVisible, onSelect: () => setLayout({ sidebarVisible: !layout.sidebarVisible }) },
         { type: "checkbox", label: t("menu.workspacePanel"), checked: layout.workspaceVisible, onSelect: () => setLayout({ workspaceVisible: !layout.workspaceVisible, sidebarVisible: true }) },
         { type: "checkbox", label: t("menu.historyPanel"), checked: layout.historyVisible, onSelect: () => setLayout({ historyVisible: !layout.historyVisible, sidebarVisible: true }) },
+        { type: "checkbox", label: t("menu.commandsPanel"), checked: layout.commandsVisible, onSelect: () => setLayout({ commandsVisible: !layout.commandsVisible, sidebarVisible: true }) },
         { type: "checkbox", label: t("menu.consolePanel"), checked: layout.consoleVisible, onSelect: () => setLayout({ consoleVisible: !layout.consoleVisible }) },
         { type: "separator" },
         {
